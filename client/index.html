@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tactical Face Scanner</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Share+Tech+Mono&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+    <script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.13/dist/face-api.min.js"></script>
+    <script defer src="./app.js"></script>
+  </head>
+  <body>
+    <div class="hud-grid"></div>
+    <main class="shell">
+      <header class="shell-header">
+        <div>
+          <p class="kicker">Field Node 07</p>
+          <h1>Tactical Face Scanner</h1>
+        </div>
+        <div class="status">
+          <span class="dot" id="modelDot"></span>
+          <span id="modelStatus">Loading models...</span>
+        </div>
+      </header>
+
+      <section class="layout">
+        <aside class="panel">
+          <h2>Input Feed</h2>
+          <label class="button">
+            Upload Image
+            <input id="uploadInput" type="file" accept="image/*" hidden />
+          </label>
+          <button id="startCameraBtn">Start Camera</button>
+          <button id="captureBtn" disabled>Capture Frame</button>
+          <button id="stopCameraBtn" disabled>Stop Camera</button>
+          <button id="detectBtn" disabled>Extract Faces</button>
+
+          <div class="separator"></div>
+
+          <h2>Database Ops</h2>
+          <label for="agentLabel">Agent Label</label>
+          <input id="agentLabel" type="text" placeholder="e.g. Agent Vega" />
+          <button id="enrollBtn" disabled>Enroll Selected Face</button>
+          <button id="lookupBtn" disabled>Lookup Selected Face</button>
+        </aside>
+
+        <section class="panel scan-panel">
+          <div class="stage">
+            <video id="camera" autoplay muted playsinline></video>
+            <canvas id="sceneCanvas"></canvas>
+            <canvas id="overlayCanvas"></canvas>
+            <div class="scanline"></div>
+          </div>
+          <div id="noSignal" class="empty-state">No signal. Upload or capture an image.</div>
+          <div id="facesStrip" class="faces-strip"></div>
+        </section>
+
+        <aside class="panel telemetry">
+          <h2>Telemetry</h2>
+          <pre id="telemetryLog"></pre>
+          <h2>Matches</h2>
+          <div id="results" class="results"></div>
+        </aside>
+      </section>
+    </main>
+  </body>
+</html>
