@@ -2,26 +2,26 @@
 
 **Date:** 2026-03-28
 **Status:** Approved
-**Scope:** Phase 1 — Server-side FHE with openfhe-python (HEIR stretch goal)
+**Scope:** Phase 1 — Server-side FHE with Google HEIR + OpenFHE backend
 
 ## Goal
 
 Add Fully Homomorphic Encryption (CKKS scheme) to the facial recognition system so that face embeddings can be matched via cosine similarity computed entirely on ciphertext. In Phase 1, the server performs encryption/decryption (demo mode). Phase 2 (future) moves encryption to the browser.
 
-Long-term target is Desilo pi-heaan for production FHE. This phase uses OpenFHE + Google HEIR as a stepping stone.
+Long-term target is Desilo pi-heaan for production FHE. This phase uses Google HEIR compiling to OpenFHE as a stepping stone.
 
 ## Architecture
 
 ```
-Client (unchanged)                Server (FastAPI)
+Client (unchanged)                Server
 ─────────────────                ──────────────────────────────────────
 face-api.js                      POST /fhe/enroll
-  → 128 floats (plaintext) ────→   openfhe-python encrypts embedding
+  → 128 floats (plaintext) ────→   HEIR-generated C++ encrypts embedding
                                     serializes ciphertext → SQLite
 
 face-api.js                      POST /fhe/search
-  → 128 floats (plaintext) ────→   openfhe-python encrypts query
-                                    homomorphic dot-product on ciphertext pairs
+  → 128 floats (plaintext) ────→   HEIR-generated C++ encrypts query
+                                    HEIR dot-product on ciphertext pairs
                                     decrypts similarity scores
                                     returns ranked matches
 
@@ -33,46 +33,91 @@ face-api.js                      POST /fhe/search
 
 Cosine similarity of two unit vectors = their dot product. The client already L2-normalizes before sending, and the server normalizes again. So the homomorphic operation we need is just a dot product of two 128-element encrypted vectors.
 
-## Components
+## HEIR Pipeline
 
-### 1. FHE Crypto Module — `server/fhe/crypto.py`
+HEIR has an existing CKKS dot product example (`tests/Examples/openfhe/ckks/dot_product_8f/`) that we adapt from 8 elements to 128.
 
-Wraps openfhe-python for CKKS operations:
+### Step 1: MLIR Source — `dot_product_128f.mlir`
 
-- `generate_keys()` → (public_key, secret_key, eval_keys, crypto_context)
-- `encrypt(embedding: list[float], public_key, crypto_context)` → serialized ciphertext bytes
-- `decrypt(ciphertext_bytes, secret_key, crypto_context)` → list[float]
-- `serialize_key(key)` → bytes, `deserialize_key(bytes)` → key
-- `load_ciphertext(bytes, crypto_context)` → ciphertext object
+Adapted from HEIR's `dot_product_8f.mlir`:
 
-**Key persistence:** Keys are generated on first startup, serialized to `server/fhe/keys/` (secret_key.bin, public_key.bin, eval_keys.bin, crypto_context.bin). On subsequent startups, keys are loaded from disk. If key files are missing or corrupted, new keys are generated and all existing `fhe_identities` rows are purged (ciphertext encrypted under old keys is unrecoverable).
-
-**State storage:** Crypto context and keys are stored on `app.state` during startup, accessed by route handlers via FastAPI dependency injection.
-
-**CKKS Parameters (starting point):**
-- Multiplicative depth: 2 (depth 1 for element-wise multiply, depth 2 as headroom for rescaling overhead)
-- Ring dimension: 8192 (may increase to 16384 if accuracy requires it)
-- Scaling mod size: 40 bits
-- First mod size: 50 bits
-- Batch size: 128 (matches embedding dimension)
-
-### 2. Homomorphic Dot Product — `server/fhe/dot_product.py`
-
-**Default implementation (Phase 1):** Pure openfhe-python using the standard rotation-and-sum pattern:
-- Element-wise homomorphic multiplication of two ciphertexts
-- Rotation-and-sum accumulation (log2(128) = 7 rotations + 7 additions)
-
-This is implemented as a Python function calling openfhe-python's `EvalMult`, `EvalRotate`, and `EvalAdd` operations directly.
-
-**HEIR stretch goal:** Compile the same dot product logic via Google HEIR targeting the OpenFHE backend. This would produce a C++ shared library (`.dylib` on macOS) that operates on serialized ciphertext byte buffers. Integration requires a C-wrapper layer to marshal between Python and the HEIR-generated code (serialize ciphertext → pass byte buffer → deserialize result). This is deferred unless the openfhe-python path proves too slow.
-
-The `dot_product()` function interface is the same regardless of backend:
-```python
-def dot_product(ct_a, ct_b, crypto_context, eval_keys) -> ciphertext:
-    """Compute dot product of two encrypted 128-element vectors."""
+```mlir
+func.func @dot_product(%arg0: tensor<128xf32> {secret.secret}, %arg1: tensor<128xf32> {secret.secret}) -> f32 {
+  %c0_f32 = arith.constant 0.0 : f32
+  %0 = affine.for %arg2 = 0 to 128 iter_args(%iter = %c0_f32) -> (f32) {
+    %1 = tensor.extract %arg0[%arg2] : tensor<128xf32>
+    %2 = tensor.extract %arg1[%arg2] : tensor<128xf32>
+    %3 = arith.mulf %1, %2 : f32
+    %4 = arith.addf %iter, %3 : f32
+    affine.yield %4 : f32
+  }
+  return %0 : f32
+}
 ```
 
-### 3. FHE API Routes — `server/fhe_routes.py`
+### Step 2: Compile with HEIR
+
+```bash
+# Convert MLIR → CKKS → OpenFHE IR
+heir-opt \
+  --annotate-module='backend=openfhe scheme=ckks' \
+  --mlir-to-ckks='ciphertext-degree=1024' \
+  --scheme-to-openfhe \
+  dot_product_128f.mlir > output.mlir
+
+# Generate C++ code
+heir-translate --emit-openfhe-pke-header output.mlir > dot_product_lib.h
+heir-translate --emit-openfhe-pke output.mlir > dot_product_lib.cpp
+```
+
+### Step 3: Generated API
+
+HEIR generates these C++ functions (based on the existing dot product example):
+
+```cpp
+// Auto-generated by HEIR
+CryptoContext dot_product__generate_crypto_context();
+CryptoContext dot_product__configure_crypto_context(CryptoContext, SecretKey);
+Ciphertext   dot_product__encrypt__arg0(CryptoContext, vector<float>, PublicKey);
+Ciphertext   dot_product(CryptoContext, Ciphertext, Ciphertext);
+float        dot_product__decrypt__result0(CryptoContext, Ciphertext, SecretKey);
+```
+
+This gives us encrypt, compute, and decrypt in one generated package — no need for a separate openfhe-python wrapper.
+
+### Step 4: Build as shared library
+
+Build via Bazel (following HEIR's build system) into a shared library that the Python server calls via ctypes or subprocess. Alternatively, build as a standalone binary that accepts serialized inputs and returns serialized outputs.
+
+## Components
+
+### 1. HEIR Dot Product Library — `server/fhe/heir/`
+
+The compiled HEIR output: C++ source, header, and built shared library/binary.
+
+- `dot_product_128f.mlir` — MLIR source (our input)
+- `dot_product_lib.h` / `dot_product_lib.cpp` — generated by `heir-translate`
+- `BUILD` — Bazel build config
+- Binary/library output used by FastAPI
+
+### 2. Python-C++ Bridge — `server/fhe/bridge.py`
+
+Calls the HEIR-compiled binary from Python. Options:
+- **Subprocess**: compiled binary reads/writes serialized ciphertext via stdin/stdout or files
+- **ctypes/cffi**: load shared library directly, pass serialized byte buffers
+- **pybind11 wrapper**: thin C++ wrapper exposing the generated API to Python
+
+Subprocess is simplest for Phase 1; optimize later if needed.
+
+### 3. Key Management — `server/fhe/keys.py`
+
+Uses the HEIR-generated `generate_crypto_context` and `configure_crypto_context` functions.
+
+**Key persistence:** Keys are generated on first startup, serialized to `server/fhe/keys/` directory. On subsequent startups, keys are loaded from disk. If key files are missing or corrupted, new keys are generated and all `fhe_identities` rows are purged (ciphertext under old keys is unrecoverable).
+
+**State storage:** Crypto context and keys stored on `app.state` during startup, accessed by route handlers via FastAPI dependency injection.
+
+### 4. FHE API Routes — `server/fhe_routes.py`
 
 New FastAPI router mounted at `/fhe/`.
 
@@ -82,16 +127,16 @@ New FastAPI router mounted at `/fhe/`.
 ```json
 {
   "label": "Agent Nova",
-  "embedding": [0.11, -0.08, ...],  // 128 floats
-  "metadata": {"role": "Field Operative"}  // optional
+  "embedding": [0.11, -0.08, ...],
+  "metadata": {"role": "Field Operative"}
 }
 ```
 
 **Server logic:**
 1. Validate label and embedding (reuse existing Pydantic models)
 2. L2-normalize the embedding
-3. Encrypt with CKKS → serialized ciphertext
-4. Store in `fhe_identities` table (label, ciphertext blob, metadata)
+3. Encrypt with HEIR-generated `dot_product__encrypt__arg0()`
+4. Serialize ciphertext → store in `fhe_identities` table
 
 **Response:**
 ```json
@@ -106,7 +151,7 @@ New FastAPI router mounted at `/fhe/`.
 **Request** (same format as `/search`):
 ```json
 {
-  "embedding": [0.11, -0.08, ...],  // 128 floats
+  "embedding": [0.11, -0.08, ...],
   "top_k": 5,
   "threshold": 0.35
 }
@@ -114,10 +159,10 @@ New FastAPI router mounted at `/fhe/`.
 
 **Server logic:**
 1. Validate and L2-normalize the query embedding
-2. Encrypt query with CKKS
+2. Encrypt query via HEIR-generated encrypt function
 3. Load all stored ciphertexts from `fhe_identities`
-4. For each stored ciphertext: compute homomorphic dot product
-5. Decrypt each result to get similarity score (single float)
+4. For each: call HEIR-generated `dot_product()` on ciphertext pair
+5. Decrypt each result via `dot_product__decrypt__result0()`
 6. Filter by threshold, sort descending, take top_k
 
 **Response** (same format as `/search`):
@@ -137,7 +182,7 @@ Same pattern as `/enroll/bulk` — iterate and encrypt each entry. Max 50 entrie
 
 Returns metadata only (label, created_at, metadata). No ciphertext in response.
 
-### 4. Database Schema
+### 5. Database Schema
 
 New table alongside existing `identities`:
 
@@ -151,53 +196,61 @@ CREATE TABLE fhe_identities (
 );
 ```
 
-Ciphertext is stored as a binary blob (OpenFHE serialization).
+Ciphertext stored as binary blob (OpenFHE serialization format).
 
-### 5. Client Changes
+### 6. Client Changes
 
-**None in Phase 1.** The client sends the same plaintext JSON it sends today. The FHE endpoints accept the same request format. The only difference is which URL the client hits.
-
-A simple UI toggle could switch between `/enroll` and `/fhe/enroll` (optional, low priority).
+**None in Phase 1.** The client sends the same plaintext JSON. The FHE endpoints accept the same request format. A UI toggle to switch between `/enroll` and `/fhe/enroll` is optional/low priority.
 
 ## Dependencies
 
-### Python (server)
-- `openfhe` (openfhe-python) — CKKS encryption, decryption, key generation
-- Existing: FastAPI, uvicorn, numpy, pydantic
+### Build tools (required)
+- Google HEIR (pip: `heir_py`, or build from source)
+- Bazel / Bazelisk (HEIR build system)
+- OpenFHE C++ library (linked by HEIR-generated code)
+- C++ compiler (clang recommended)
 
-### Build tools (HEIR stretch goal only)
-- Google HEIR — compile dot product to OpenFHE-backed shared library
-- Bazel (HEIR build system)
-- OpenFHE C++ library (HEIR compilation target)
+### Python (server)
+- Existing: FastAPI, uvicorn, numpy, pydantic
+- No openfhe-python needed — HEIR generates the crypto operations directly
+
+## CKKS Parameters
+
+Controlled by HEIR compilation flags:
+- `--mlir-to-ckks='ciphertext-degree=1024'` (may need tuning for 128-element vectors)
+- Multiplicative depth: determined by HEIR's optimizer (dot product needs depth 1 for multiply + rotation-and-sum accumulation; HEIR adds headroom automatically)
+- HEIR handles ring dimension, scaling, and modulus chain selection
 
 ## Performance Considerations
 
 - **Key generation:** ~1-5 seconds at startup. One-time cost.
-- **Encryption:** ~10-50ms per embedding (128 slots in one ciphertext).
-- **Dot product:** One homomorphic multiply + 7 rotations + 7 additions per comparison. ~50-200ms per pair.
-- **Search across N identities:** O(N) comparisons. For demo scale (<100 identities), this is acceptable.
-- **Ciphertext size:** ~32KB-128KB per embedding (much larger than 128 floats). SQLite handles this fine at demo scale.
+- **Encryption:** ~10-50ms per embedding (128 slots packed into one ciphertext).
+- **Dot product:** One homomorphic multiply + log2(128)=7 rotations + 7 additions per comparison. ~50-200ms per pair.
+- **Search across N identities:** O(N) comparisons. For demo scale (<100 identities), acceptable.
+- **Ciphertext size:** ~32KB-128KB per embedding. SQLite handles this at demo scale.
+- **Subprocess overhead:** If using subprocess bridge, add ~10-50ms per call for process spawn. Acceptable for demo; switch to ctypes/pybind11 if needed.
 
 ## Error Handling
 
-- FHE operations that fail (e.g., parameter mismatch, corrupted ciphertext) return 500 with a generic error message.
-- Validation errors (bad embedding length, empty label) return 422, same as existing endpoints.
-- If FHE initialization fails at startup (e.g., openfhe not installed), log a warning and disable `/fhe/` endpoints. Server still serves plaintext endpoints.
-- `/health` endpoint extended to report FHE status: `{"status": "ok", "fhe": "ok"}` or `{"status": "ok", "fhe": "disabled"}`.
+- FHE operations that fail (parameter mismatch, corrupted ciphertext) return 500 with generic error.
+- Validation errors (bad embedding length, empty label) return 422, same as existing.
+- If HEIR binary/library not found at startup, log warning and disable `/fhe/` endpoints. Plaintext endpoints unaffected.
+- `/health` endpoint extended: `{"status": "ok", "fhe": "ok"}` or `{"status": "ok", "fhe": "disabled"}`.
 
 ## Testing Strategy
 
-- **Unit tests:** Encrypt → dot product → decrypt roundtrip with known vectors. Verify similarity scores match plaintext computation within CKKS approximation tolerance (~1e-4).
+- **HEIR compilation test:** Verify the 128-element MLIR compiles and the generated binary runs with test vectors.
+- **Roundtrip test:** Encrypt → dot product → decrypt with known vectors. Verify scores match plaintext within CKKS tolerance (~1e-3, per HEIR's own test).
 - **Integration tests:** Full enroll + search flow through FastAPI endpoints. Compare FHE results against plaintext endpoint results for same inputs.
 - **Accuracy validation:** Run existing seed embeddings through both pipelines, verify match rankings are identical.
-- **Threshold tolerance:** CKKS introduces approximation noise (~1e-4). For scores near the threshold boundary, this could flip match/no-match decisions. Tests should verify that FHE and plaintext pipelines produce the same ranking order, and the FHE threshold should be set slightly below the plaintext threshold (e.g., `threshold - 0.001`) to account for noise.
+- **Threshold tolerance:** CKKS approximation noise (~1e-3). FHE threshold should be set slightly below plaintext threshold (e.g., `threshold - 0.001`) to account for noise.
 
 ## Future Work (Phase 2)
 
 - Move encryption to browser via openfhe-wasm
 - Client generates keys, sends public + eval keys to server
 - Server never sees plaintext embeddings
-- Migrate HEIR backend to Desilo pi-heaan (inner product + argmax patterns from their docs)
+- Migrate to Desilo pi-heaan (inner product + argmax patterns from their docs)
 
 ## File Structure
 
@@ -207,9 +260,15 @@ server/
 ├── fhe_routes.py                    # New FHE API router
 ├── fhe/
 │   ├── __init__.py
-│   ├── crypto.py                    # OpenFHE CKKS wrapper
-│   ├── dot_product.py               # Homomorphic dot product (openfhe-python)
+│   ├── bridge.py                    # Python ↔ HEIR C++ bridge
+│   ├── keys.py                      # Key generation, persistence, loading
+│   ├── db.py                        # FHE identities DB operations
 │   ├── keys/                        # Serialized keys (gitignored)
-│   └── db.py                        # FHE identities DB operations
-└── requirements.txt                 # Updated with openfhe
+│   └── heir/
+│       ├── dot_product_128f.mlir    # MLIR source (our input)
+│       ├── dot_product_lib.h        # Generated by heir-translate
+│       ├── dot_product_lib.cpp      # Generated by heir-translate
+│       ├── BUILD                    # Bazel build config
+│       └── dot_product_bin          # Compiled binary
+└── requirements.txt                 # Updated (no openfhe-python needed)
 ```
