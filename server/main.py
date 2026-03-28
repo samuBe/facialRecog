@@ -8,9 +8,12 @@ from typing import Any
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 
 BASE_DIR = Path(__file__).resolve().parent
+CLIENT_DIR = BASE_DIR.parent / "client"
 DB_PATH = BASE_DIR / "faces.db"
 SEED_PATH = BASE_DIR / "data" / "seed_embeddings.json"
 
@@ -33,6 +36,22 @@ class EnrollRequest(BaseModel):
         if not cleaned:
             raise ValueError("label cannot be empty")
         return cleaned
+
+
+class BulkEnrollRequest(BaseModel):
+    entries: list[EnrollRequest] = Field(..., min_length=1, max_length=50)
+
+
+class EntryResult(BaseModel):
+    label: str
+    status: str  # "saved" or "error"
+    detail: str | None = None
+
+
+class BulkEnrollResponse(BaseModel):
+    enrolled: int
+    errors: int
+    results: list[EntryResult]
 
 
 class Match(BaseModel):
@@ -88,7 +107,7 @@ def load_identities(conn: sqlite3.Connection) -> list[tuple[str, np.ndarray, dic
     return parsed
 
 
-def upsert_identity(conn: sqlite3.Connection, label: str, embedding: list[float], metadata: dict[str, Any] | None = None) -> None:
+def upsert_identity(conn: sqlite3.Connection, label: str, embedding: list[float], metadata: dict[str, Any] | None = None, *, commit: bool = True) -> None:
     unit_vec = embedding_to_unit(embedding)
     conn.execute(
         """
@@ -103,7 +122,8 @@ def upsert_identity(conn: sqlite3.Connection, label: str, embedding: list[float]
             json.dumps(metadata) if metadata else None,
         ),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def seed_if_empty() -> None:
@@ -175,6 +195,26 @@ def enroll(payload: EnrollRequest) -> dict[str, str]:
     return {"status": "saved", "label": payload.label}
 
 
+@app.post("/enroll/bulk", response_model=BulkEnrollResponse)
+def enroll_bulk(payload: BulkEnrollRequest) -> BulkEnrollResponse:
+    results: list[EntryResult] = []
+    enrolled = 0
+    errors = 0
+
+    with get_connection() as conn:
+        for entry in payload.entries:
+            try:
+                upsert_identity(conn, entry.label, entry.embedding, entry.metadata, commit=False)
+                results.append(EntryResult(label=entry.label, status="saved"))
+                enrolled += 1
+            except Exception as exc:
+                results.append(EntryResult(label=entry.label, status="error", detail=str(exc)))
+                errors += 1
+        conn.commit()
+
+    return BulkEnrollResponse(enrolled=enrolled, errors=errors, results=results)
+
+
 @app.post("/search", response_model=SearchResponse)
 def search(payload: SearchRequest) -> SearchResponse:
     try:
@@ -202,3 +242,11 @@ def search(payload: SearchRequest) -> SearchResponse:
         best_match=top_matches[0] if top_matches else None,
         matches=top_matches,
     )
+
+
+@app.get("/")
+def serve_index() -> FileResponse:
+    return FileResponse(CLIENT_DIR / "index.html")
+
+
+app.mount("/static", StaticFiles(directory=CLIENT_DIR), name="static")
