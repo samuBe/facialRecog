@@ -7,7 +7,22 @@ const API_URL = "http://localhost:8000";
 const fheToggle = document.getElementById("fheToggle");
 let fheMode = false;
 
-fheToggle.addEventListener("change", () => {
+fheToggle.addEventListener("change", async () => {
+  if (fheToggle.checked) {
+    try {
+      const r = await fetch(`${API_URL}/health`);
+      const data = await r.json();
+      if (data.fhe !== "ok") {
+        fheToggle.checked = false;
+        log("FHE backend not available.");
+        return;
+      }
+    } catch {
+      fheToggle.checked = false;
+      log("Cannot reach server — FHE unavailable.");
+      return;
+    }
+  }
   fheMode = fheToggle.checked;
   log(fheMode ? "FHE mode ON — using encrypted backend" : "FHE mode OFF — using plaintext backend");
 });
@@ -147,23 +162,6 @@ async function loadModels() {
       setModelReady(true, "Models loaded");
       detectBtn.disabled = false;
       log(`face-api models loaded from ${url}`);
-
-      // Check if FHE backend is available
-      fetch(`${API_URL}/health`)
-        .then((r) => r.json())
-        .then((data) => {
-          if (data.fhe === "ok") {
-            fheToggle.disabled = false;
-            log("FHE backend available.");
-          } else {
-            fheToggle.disabled = true;
-            fheToggle.checked = false;
-            log("FHE backend not available.");
-          }
-        })
-        .catch(() => {
-          fheToggle.disabled = true;
-        });
 
       return;
     } catch (error) {
