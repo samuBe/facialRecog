@@ -431,29 +431,10 @@ function renderBulkReview() {
       row.classList.add("duplicate");
     }
 
-    const labelEl = document.createElement("span");
-    labelEl.className = "bulk-review-label";
-    labelEl.textContent = result.label;
-
-    const statusEl = document.createElement("span");
-    statusEl.className = "bulk-review-status";
-
-    if (result.status === "no-face") {
-      statusEl.textContent = "No face detected";
-    } else if (result.status === "error") {
-      statusEl.textContent = result.error || "Failed to load";
-    } else if (labelCounts[result.label] > 1) {
-      statusEl.textContent = "Duplicate label";
-    } else {
-      statusEl.textContent = `${result.faces.length} face(s)`;
-    }
-
-    row.appendChild(labelEl);
+    const facesContainer = document.createElement("div");
+    facesContainer.className = "bulk-review-faces";
 
     if (result.status === "ready" && result.faces.length > 0) {
-      const facesContainer = document.createElement("div");
-      facesContainer.className = "bulk-review-faces";
-
       result.faces.forEach((face, faceIndex) => {
         const btn = document.createElement("button");
         btn.type = "button";
@@ -466,11 +447,33 @@ function renderBulkReview() {
         });
         facesContainer.appendChild(btn);
       });
-
-      row.appendChild(facesContainer);
     }
 
-    row.appendChild(statusEl);
+    const infoEl = document.createElement("div");
+    infoEl.className = "bulk-review-info";
+
+    const labelEl = document.createElement("span");
+    labelEl.className = "bulk-review-label";
+    labelEl.textContent = result.label;
+
+    const statusEl = document.createElement("span");
+    statusEl.className = "bulk-review-status";
+
+    if (result.status === "no-face") {
+      statusEl.textContent = "No face detected";
+    } else if (result.status === "error") {
+      statusEl.textContent = result.error || "Failed to load";
+    } else if (labelCounts[result.label] > 1) {
+      statusEl.textContent = "Duplicate label — last wins";
+    } else {
+      statusEl.textContent = `${result.faces.length} face(s) detected`;
+    }
+
+    infoEl.appendChild(labelEl);
+    infoEl.appendChild(statusEl);
+
+    row.appendChild(facesContainer);
+    row.appendChild(infoEl);
     bulkReviewList.appendChild(row);
   });
 

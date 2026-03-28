@@ -73,12 +73,17 @@
       </section>
       <div id="bulkModal" class="bulk-modal" hidden>
         <div class="bulk-modal-content">
-          <h2>Bulk Upload Review</h2>
-          <p id="bulkProgress" class="bulk-progress"></p>
+          <header class="bulk-modal-header">
+            <div>
+              <p class="kicker">Database Ops</p>
+              <h2>Bulk Upload Review</h2>
+            </div>
+            <p id="bulkProgress" class="bulk-progress"></p>
+          </header>
           <div id="bulkReviewList" class="bulk-review-list"></div>
           <div class="bulk-modal-actions">
-            <button id="bulkEnrollBtn" disabled>Enroll All</button>
             <button id="bulkCancelBtn">Cancel</button>
+            <button id="bulkEnrollBtn" disabled>Enroll All</button>
           </div>
         </div>
       </div>
