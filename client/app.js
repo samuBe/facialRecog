@@ -274,6 +274,21 @@ function selectedDescriptor() {
   return Array.from(faceDetections[selectedFaceIndex].descriptor);
 }
 
+const fheProgress = document.getElementById("fheProgress");
+const fheProgressLabel = document.getElementById("fheProgressLabel");
+const fheProgressFill = document.getElementById("fheProgressFill");
+
+function showProgress(label, pct) {
+  fheProgress.hidden = false;
+  fheProgressLabel.textContent = label;
+  fheProgressFill.style.width = pct + "%";
+}
+
+function hideProgress() {
+  fheProgress.hidden = true;
+  fheProgressFill.style.width = "0%";
+}
+
 async function lookupFace() {
   const embedding = selectedDescriptor();
   if (!embedding) {
@@ -281,8 +296,12 @@ async function lookupFace() {
     return;
   }
 
+  if (fheMode) {
+    return lookupFaceFHE(embedding);
+  }
+
   try {
-    const response = await fetch(`${apiPath("/search")}`, {
+    const response = await fetch(`${API_URL}/search`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ embedding, top_k: 5, threshold: 0.35 }),
@@ -297,6 +316,60 @@ async function lookupFace() {
     log(`Lookup complete. ${data.count} candidate(s) above threshold.`);
   } catch (error) {
     log(error.message);
+  }
+}
+
+async function lookupFaceFHE(embedding) {
+  showProgress("Encrypting query...", 0);
+  resultsNode.innerHTML = "";
+  log("FHE search starting...");
+
+  try {
+    const response = await fetch(`${API_URL}/fhe/search/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ embedding, top_k: 5, threshold: 0.35 }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`FHE lookup failed: ${response.status}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const event = JSON.parse(line.slice(6));
+
+        if (event.type === "status") {
+          showProgress(event.message, 0);
+          log(event.message);
+        } else if (event.type === "progress") {
+          const pct = Math.round((event.current / event.total) * 100);
+          showProgress(
+            `Comparing ${event.current}/${event.total}: ${event.label} → ${(event.similarity * 100).toFixed(1)}%`,
+            pct
+          );
+        } else if (event.type === "result") {
+          hideProgress();
+          renderMatches(event.matches || []);
+          log(`FHE search complete in ${event.elapsed}s. ${event.count} match(es).`);
+        }
+      }
+    }
+  } catch (error) {
+    hideProgress();
+    log("FHE search error: " + error.message);
   }
 }
 

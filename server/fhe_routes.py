@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import Any
 
 import numpy as np
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from fhe.crypto import (
@@ -128,6 +130,55 @@ def fhe_search(payload: FHESearchRequest) -> FHESearchResponse:
         best_match=top[0] if top else None,
         matches=top,
     )
+
+
+@router.post("/search/stream")
+def fhe_search_stream(payload: FHESearchRequest) -> StreamingResponse:
+    """SSE endpoint that streams progress during FHE search."""
+    try:
+        query_vec = _normalize(payload.embedding)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    def generate():
+        t_start = time.time()
+
+        yield f"data: {json.dumps({'type': 'status', 'message': 'Encrypting query...'})}\n\n"
+        enc_query = deserialize_ciphertext(encrypt_query(query_vec.tolist()))
+
+        with get_fhe_connection() as conn:
+            identities = load_fhe_identities(conn)
+
+        total = len(identities)
+        if total == 0:
+            yield f"data: {json.dumps({'type': 'result', 'count': 0, 'best_match': None, 'matches': []})}\n\n"
+            return
+
+        yield f"data: {json.dumps({'type': 'status', 'message': f'Comparing against {total} encrypted identities...', 'total': total, 'current': 0})}\n\n"
+
+        ranked = []
+        for i, identity in enumerate(identities):
+            enc_stored = deserialize_ciphertext(identity["ciphertext"])
+            enc_result = eval_dot_product(enc_query, enc_stored)
+            score = decrypt_result(enc_result)
+            logger.info("[search/stream] %s → %.6f", identity["label"], score)
+
+            if score >= payload.threshold:
+                ranked.append({
+                    "label": identity["label"],
+                    "similarity": round(score, 4),
+                    "metadata": identity["metadata"],
+                })
+
+            yield f"data: {json.dumps({'type': 'progress', 'current': i + 1, 'total': total, 'label': identity['label'], 'similarity': round(score, 4)})}\n\n"
+
+        ranked.sort(key=lambda m: m["similarity"], reverse=True)
+        top = ranked[: payload.top_k]
+        elapsed = time.time() - t_start
+
+        yield f"data: {json.dumps({'type': 'result', 'count': len(top), 'best_match': top[0] if top else None, 'matches': top, 'elapsed': round(elapsed, 2)})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 @router.post("/enroll/bulk")

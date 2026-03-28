@@ -12,7 +12,7 @@
     />
     <link rel="stylesheet" href="/static/styles.css" />
     <script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.13/dist/face-api.min.js"></script>
-    <script defer src="/static/app.js"></script>
+    <script defer src="/static/app.js?v=3"></script>
   </head>
   <body>
     <div class="hud-grid"></div>
@@ -25,7 +25,7 @@
         <div class="status">
           <span class="dot" id="modelDot"></span>
           <span id="modelStatus">Loading models...</span>
-          <button type="button" class="fhe-toggle" id="fheToggleBtn" onclick="window.__toggleFhe && window.__toggleFhe()">
+          <button type="button" class="fhe-toggle" id="fheToggleBtn" onclick="window.__toggleFhe &amp;&amp; window.__toggleFhe()">
             <span class="fhe-dot" id="fheDot"></span>
             <span id="fheLabel">FHE Mode</span>
           </button>
@@ -72,6 +72,10 @@
           <h2>Telemetry</h2>
           <pre id="telemetryLog"></pre>
           <h2>Matches</h2>
+          <div id="fheProgress" class="fhe-progress" hidden>
+            <div class="fhe-progress-label" id="fheProgressLabel">Encrypting query...</div>
+            <div class="fhe-progress-bar"><div class="fhe-progress-fill" id="fheProgressFill"></div></div>
+          </div>
           <div id="results" class="results"></div>
         </aside>
       </section>

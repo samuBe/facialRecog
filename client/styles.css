@@ -489,3 +489,29 @@ video,
   background: #64ffda;
   box-shadow: 0 0 6px #64ffda;
 }
+
+.fhe-progress {
+  margin-bottom: 12px;
+}
+
+.fhe-progress-label {
+  font-family: "Share Tech Mono", monospace;
+  font-size: 0.75rem;
+  color: #64ffda;
+  margin-bottom: 4px;
+}
+
+.fhe-progress-bar {
+  height: 6px;
+  background: var(--line, #1a3a4a);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.fhe-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #64ffda, #00d2ff);
+  border-radius: 3px;
+  transition: width 0.2s ease;
+}
