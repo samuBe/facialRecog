@@ -5,11 +5,27 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("fhe")
 
 FHE_TABLE = "fhe_identities"
+
+_db_path: Path | None = None
+
+
+def set_db_path(path: Path) -> None:
+    global _db_path
+    _db_path = path
+
+
+def get_fhe_connection() -> sqlite3.Connection:
+    if _db_path is None:
+        raise RuntimeError("FHE DB path not configured. Call set_db_path() first.")
+    conn = sqlite3.connect(_db_path)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 def init_fhe_db(conn: sqlite3.Connection) -> None:

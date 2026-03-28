@@ -12,6 +12,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+)
+fhe_logger = logging.getLogger("fhe")
+
 BASE_DIR = Path(__file__).resolve().parent
 CLIENT_DIR = BASE_DIR.parent / "client"
 DB_PATH = BASE_DIR / "faces.db"
@@ -154,16 +162,41 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+_fhe_available = False
+try:
+    from fhe_routes import router as fhe_router
+    from fhe.db import init_fhe_db, set_db_path
+    from fhe.ops import fhe_dot_product_ctx
+
+    app.include_router(fhe_router)
+    _fhe_available = True
+except ImportError:
+    fhe_logger.warning("heir_py not installed — FHE endpoints disabled")
+
 
 @app.on_event("startup")
 def startup() -> None:
     init_db()
     seed_if_empty()
 
+    if _fhe_available:
+        fhe_logger.info("Initializing FHE subsystem (compilation takes ~7s)...")
+        set_db_path(DB_PATH)
+        with get_connection() as conn:
+            init_fhe_db(conn)
+            conn.execute("DELETE FROM fhe_identities")
+            conn.commit()
+            fhe_logger.info("Cleared stale FHE identities (keys regenerated)")
+        try:
+            fhe_dot_product_ctx()
+            fhe_logger.info("FHE subsystem ready")
+        except Exception:
+            fhe_logger.exception("FHE initialization failed")
+
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "fhe": "ok" if _fhe_available else "disabled"}
 
 
 @app.get("/identities")
