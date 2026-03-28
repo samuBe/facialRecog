@@ -27,6 +27,7 @@ const bulkEnrollBtn = document.getElementById("bulkEnrollBtn");
 const bulkCancelBtn = document.getElementById("bulkCancelBtn");
 
 let bulkResults = [];
+let bulkProcessing = false;
 
 const video = document.getElementById("camera");
 const sceneCanvas = document.getElementById("sceneCanvas");
@@ -368,6 +369,8 @@ function makeFaceThumb(sourceCanvas, box, size = 56) {
 }
 
 async function processBulkUpload(files) {
+  if (bulkProcessing) return;
+  bulkProcessing = true;
   const fileList = Array.from(files).slice(0, 50);
   bulkResults = [];
   bulkReviewList.innerHTML = "";
@@ -403,6 +406,7 @@ async function processBulkUpload(files) {
     }
   }
 
+  bulkProcessing = false;
   renderBulkReview();
 }
 
@@ -512,6 +516,7 @@ async function bulkEnroll() {
     });
 
     bulkModal.hidden = true;
+    bulkResults = [];
   } catch (err) {
     log(`Bulk enroll error: ${err.message}`);
     bulkEnrollBtn.disabled = false;
