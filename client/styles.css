@@ -459,8 +459,18 @@ video,
   font-family: "Share Tech Mono", monospace;
   font-size: 0.8rem;
   color: var(--text-muted, #8892b0);
+  padding: 0.25rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.fhe-toggle:has(input:checked) {
+  border-color: #64ffda;
+  background: rgba(100, 255, 218, 0.08);
 }
 
 .fhe-toggle input:checked + span {
   color: #64ffda;
+  font-weight: 700;
 }

@@ -5,26 +5,37 @@ const MODEL_URLS = [
 const API_URL = "http://localhost:8000";
 
 const fheToggle = document.getElementById("fheToggle");
+const fheLabel = document.getElementById("fheLabel");
 let fheMode = false;
+
+function setFheStatus(on) {
+  fheMode = on;
+  fheToggle.checked = on;
+  fheLabel.textContent = on ? "FHE ON" : "FHE Mode";
+}
 
 fheToggle.addEventListener("change", async () => {
   if (fheToggle.checked) {
+    fheLabel.textContent = "Checking...";
     try {
       const r = await fetch(`${API_URL}/health`);
       const data = await r.json();
       if (data.fhe !== "ok") {
-        fheToggle.checked = false;
-        log("FHE backend not available.");
+        setFheStatus(false);
+        log("FHE backend not available — server reports fhe: " + data.fhe);
         return;
       }
-    } catch {
-      fheToggle.checked = false;
-      log("Cannot reach server — FHE unavailable.");
+    } catch (err) {
+      setFheStatus(false);
+      log("Cannot reach server — FHE unavailable: " + err.message);
       return;
     }
+    setFheStatus(true);
+    log("FHE mode ON — using encrypted backend");
+  } else {
+    setFheStatus(false);
+    log("FHE mode OFF — using plaintext backend");
   }
-  fheMode = fheToggle.checked;
-  log(fheMode ? "FHE mode ON — using encrypted backend" : "FHE mode OFF — using plaintext backend");
 });
 
 function apiPath(path) {
