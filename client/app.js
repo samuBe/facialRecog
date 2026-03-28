@@ -16,7 +16,7 @@ function setFheStatus(on) {
   fheLabel.textContent = on ? "FHE ON" : "FHE Mode";
 }
 
-fheToggleBtn.addEventListener("click", async () => {
+async function toggleFhe() {
   if (!fheMode) {
     fheLabel.textContent = "Checking...";
     try {
@@ -38,7 +38,10 @@ fheToggleBtn.addEventListener("click", async () => {
     setFheStatus(false);
     log("FHE mode OFF — using plaintext backend");
   }
-});
+}
+
+window.__toggleFhe = toggleFhe;
+fheToggleBtn.addEventListener("click", toggleFhe);
 
 function apiPath(path) {
   return fheMode ? `${API_URL}/fhe${path}` : `${API_URL}${path}`;
