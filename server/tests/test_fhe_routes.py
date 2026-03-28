@@ -63,3 +63,26 @@ def test_health_includes_fhe(client):
     assert resp.status_code == 200
     data = resp.json()
     assert "fhe" in data
+
+
+def test_fhe_full_roundtrip(client):
+    """Enroll multiple identities, search, verify correct match ranked first."""
+    import numpy as np
+
+    np.random.seed(123)
+    embeddings = {}
+    for name in ["Alpha", "Bravo", "Charlie"]:
+        e = np.random.randn(128).astype(np.float32)
+        e = (e / np.linalg.norm(e)).tolist()
+        embeddings[name] = e
+        client.post("/fhe/enroll", json={"label": name, "embedding": e})
+
+    resp = client.post("/fhe/search", json={
+        "embedding": embeddings["Alpha"],
+        "top_k": 5,
+        "threshold": 0.0,
+    })
+    data = resp.json()
+    assert data["count"] >= 1
+    assert data["best_match"]["label"] == "Alpha"
+    assert data["best_match"]["similarity"] > 0.99
