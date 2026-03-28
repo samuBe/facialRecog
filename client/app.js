@@ -4,6 +4,18 @@ const MODEL_URLS = [
 ];
 const API_URL = "http://localhost:8000";
 
+const fheToggle = document.getElementById("fheToggle");
+let fheMode = false;
+
+fheToggle.addEventListener("change", () => {
+  fheMode = fheToggle.checked;
+  log(fheMode ? "FHE mode ON — using encrypted backend" : "FHE mode OFF — using plaintext backend");
+});
+
+function apiPath(path) {
+  return fheMode ? `${API_URL}/fhe${path}` : `${API_URL}${path}`;
+}
+
 const uploadInput = document.getElementById("uploadInput");
 const startCameraBtn = document.getElementById("startCameraBtn");
 const captureBtn = document.getElementById("captureBtn");
@@ -135,6 +147,24 @@ async function loadModels() {
       setModelReady(true, "Models loaded");
       detectBtn.disabled = false;
       log(`face-api models loaded from ${url}`);
+
+      // Check if FHE backend is available
+      fetch(`${API_URL}/health`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.fhe === "ok") {
+            fheToggle.disabled = false;
+            log("FHE backend available.");
+          } else {
+            fheToggle.disabled = true;
+            fheToggle.checked = false;
+            log("FHE backend not available.");
+          }
+        })
+        .catch(() => {
+          fheToggle.disabled = true;
+        });
+
       return;
     } catch (error) {
       log(`Model source failed (${url}): ${error.message}`);
@@ -238,7 +268,7 @@ async function lookupFace() {
   }
 
   try {
-    const response = await fetch(`${API_URL}/search`, {
+    const response = await fetch(`${apiPath("/search")}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ embedding, top_k: 5, threshold: 0.35 }),
@@ -296,7 +326,7 @@ async function enrollFace() {
   }
 
   try {
-    const response = await fetch(`${API_URL}/enroll`, {
+    const response = await fetch(`${apiPath("/enroll")}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -499,7 +529,7 @@ async function bulkEnroll() {
   bulkProgress.textContent = `Enrolling ${entries.length} face(s)...`;
 
   try {
-    const response = await fetch(`${API_URL}/enroll/bulk`, {
+    const response = await fetch(`${apiPath("/enroll/bulk")}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ entries }),

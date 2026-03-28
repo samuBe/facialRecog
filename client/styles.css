@@ -450,3 +450,17 @@ video,
     min-height: auto;
   }
 }
+
+.fhe-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 0.8rem;
+  color: var(--text-muted, #8892b0);
+}
+
+.fhe-toggle input:checked + span {
+  color: #64ffda;
+}
