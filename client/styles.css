@@ -280,12 +280,9 @@ video,
   inset: 0;
   z-index: 1000;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 40px 20px;
-  background: rgba(1, 5, 8, 0.88);
+  flex-direction: column;
+  background: rgba(1, 5, 8, 0.95);
   backdrop-filter: blur(6px);
-  overflow-y: auto;
 }
 
 .bulk-modal[hidden] {
@@ -293,35 +290,31 @@ video,
 }
 
 .bulk-modal-content {
-  width: min(800px, 90vw);
-  max-height: calc(100vh - 80px);
+  width: 100%;
+  height: 100%;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--line-strong);
   background: linear-gradient(160deg, rgba(3, 18, 27, 0.97), rgba(1, 11, 18, 0.97));
-  box-shadow: 0 0 60px rgba(0, 210, 255, 0.2);
-  margin: auto;
 }
 
 .bulk-modal-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 18px 20px;
+  padding: 16px 24px;
   border-bottom: 1px solid var(--line);
-  background: rgba(2, 12, 20, 0.9);
+  background: rgba(1, 8, 14, 0.75);
+  backdrop-filter: blur(4px);
+  box-shadow: 0 0 40px rgba(0, 210, 255, 0.18), inset 0 0 40px rgba(0, 150, 255, 0.06);
   flex-shrink: 0;
-  min-height: 64px;
 }
 
-.bulk-modal-header h2 {
-  margin: 0;
-  color: var(--text);
-  font-size: 1.1rem;
+.bulk-modal-header h1 {
+  font-size: clamp(1rem, 1.8vw, 1.6rem);
 }
 
 .bulk-modal-header .kicker {
-  margin: 0 0 4px;
+  margin: 0 0 2px;
 }
 
 .bulk-progress {
@@ -334,10 +327,11 @@ video,
 .bulk-review-list {
   display: grid;
   gap: 8px;
-  padding: 16px 20px;
+  padding: 16px 24px;
   overflow-y: auto;
   flex: 1;
   min-height: 0;
+  align-content: start;
 }
 
 .bulk-review-item {
@@ -413,10 +407,12 @@ video,
 
 .bulk-modal-actions {
   display: flex;
-  gap: 10px;
-  padding: 14px 20px;
+  gap: 12px;
+  padding: 16px 24px;
   border-top: 1px solid var(--line);
-  background: rgba(2, 12, 20, 0.9);
+  background: rgba(1, 8, 14, 0.75);
+  backdrop-filter: blur(4px);
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.4);
   flex-shrink: 0;
 }
 
@@ -426,15 +422,17 @@ video,
   background: rgba(7, 26, 37, 0.85);
   color: var(--text);
   font-family: inherit;
-  padding: 10px 12px;
+  padding: 12px 16px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
+  font-size: 0.85rem;
   cursor: pointer;
 }
 
 .bulk-modal-actions button:last-child {
   border-color: var(--line-strong);
-  background: rgba(10, 40, 55, 0.9);
+  background: rgba(10, 50, 70, 0.9);
+  box-shadow: 0 0 12px rgba(52, 245, 255, 0.15);
 }
 
 .bulk-modal-actions button:disabled {
