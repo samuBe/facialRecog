@@ -275,6 +275,120 @@ video,
   color: var(--warn);
 }
 
+.bulk-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(1, 5, 8, 0.88);
+  backdrop-filter: blur(6px);
+}
+
+.bulk-modal[hidden] {
+  display: none;
+}
+
+.bulk-modal-content {
+  width: min(800px, 90vw);
+  max-height: 80vh;
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  background: linear-gradient(160deg, rgba(3, 18, 27, 0.95), rgba(1, 11, 18, 0.95));
+  padding: 20px;
+  box-shadow: 0 0 60px rgba(0, 210, 255, 0.2);
+}
+
+.bulk-modal-content h2 {
+  margin-bottom: 14px;
+}
+
+.bulk-progress {
+  color: var(--text-dim);
+  margin: 0 0 14px;
+}
+
+.bulk-review-list {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.bulk-review-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--line);
+  background: rgba(4, 18, 27, 0.8);
+  padding: 10px;
+}
+
+.bulk-review-item.no-face {
+  opacity: 0.45;
+}
+
+.bulk-review-item.duplicate {
+  border-color: rgba(255, 200, 50, 0.6);
+}
+
+.bulk-review-label {
+  flex: 1;
+  font-family: "Orbitron", sans-serif;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+}
+
+.bulk-review-status {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.bulk-review-faces {
+  display: flex;
+  gap: 6px;
+}
+
+.bulk-face-option {
+  border: 1px solid var(--line);
+  padding: 2px;
+  cursor: pointer;
+  background: transparent;
+}
+
+.bulk-face-option.selected {
+  border-color: var(--line-strong);
+  box-shadow: 0 0 10px rgba(52, 245, 255, 0.4);
+}
+
+.bulk-face-option canvas {
+  width: 56px;
+  height: 56px;
+  display: block;
+}
+
+.bulk-modal-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.bulk-modal-actions button {
+  flex: 1;
+  border: 1px solid var(--line);
+  background: rgba(7, 26, 37, 0.85);
+  color: var(--text);
+  font-family: inherit;
+  padding: 10px 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+
+.bulk-modal-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 @media (max-width: 1050px) {
   .layout {
     grid-template-columns: 1fr;

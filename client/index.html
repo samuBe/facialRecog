@@ -10,9 +10,9 @@
       href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Share+Tech+Mono&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="/static/styles.css" />
     <script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.13/dist/face-api.min.js"></script>
-    <script defer src="./app.js"></script>
+    <script defer src="/static/app.js"></script>
   </head>
   <body>
     <div class="hud-grid"></div>
@@ -43,6 +43,10 @@
           <div class="separator"></div>
 
           <h2>Database Ops</h2>
+          <label class="button">
+            Bulk Upload
+            <input id="bulkUploadInput" type="file" accept="image/*" multiple hidden />
+          </label>
           <label for="agentLabel">Agent Label</label>
           <input id="agentLabel" type="text" placeholder="e.g. Agent Vega" />
           <button id="enrollBtn" disabled>Enroll Selected Face</button>
@@ -67,6 +71,17 @@
           <div id="results" class="results"></div>
         </aside>
       </section>
+      <div id="bulkModal" class="bulk-modal" hidden>
+        <div class="bulk-modal-content">
+          <h2>Bulk Upload Review</h2>
+          <p id="bulkProgress" class="bulk-progress"></p>
+          <div id="bulkReviewList" class="bulk-review-list"></div>
+          <div class="bulk-modal-actions">
+            <button id="bulkEnrollBtn" disabled>Enroll All</button>
+            <button id="bulkCancelBtn">Cancel</button>
+          </div>
+        </div>
+      </div>
     </main>
   </body>
 </html>

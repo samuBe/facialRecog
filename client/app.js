@@ -19,6 +19,15 @@ const resultsNode = document.getElementById("results");
 const noSignal = document.getElementById("noSignal");
 const facesStrip = document.getElementById("facesStrip");
 
+const bulkUploadInput = document.getElementById("bulkUploadInput");
+const bulkModal = document.getElementById("bulkModal");
+const bulkProgress = document.getElementById("bulkProgress");
+const bulkReviewList = document.getElementById("bulkReviewList");
+const bulkEnrollBtn = document.getElementById("bulkEnrollBtn");
+const bulkCancelBtn = document.getElementById("bulkCancelBtn");
+
+let bulkResults = [];
+
 const video = document.getElementById("camera");
 const sceneCanvas = document.getElementById("sceneCanvas");
 const overlayCanvas = document.getElementById("overlayCanvas");
@@ -310,6 +319,205 @@ async function enrollFace() {
   }
 }
 
+function labelFromFilename(filename) {
+  const name = filename.replace(/\.[^/.]+$/, "").trim();
+  return name.slice(0, 80) || "unnamed";
+}
+
+function loadImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error(`Failed to load ${file.name}`));
+    };
+    img.src = url;
+  });
+}
+
+async function detectFacesInImage(img) {
+  const canvas = document.createElement("canvas");
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  canvas.getContext("2d").drawImage(img, 0, 0);
+
+  const detections = await faceapi
+    .detectAllFaces(canvas, new faceapi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.45 }))
+    .withFaceLandmarks()
+    .withFaceDescriptors();
+
+  return { canvas, detections };
+}
+
+function makeFaceThumb(sourceCanvas, box, size = 56) {
+  const thumb = document.createElement("canvas");
+  thumb.width = size;
+  thumb.height = size;
+  const pad = 24;
+  const sx = Math.max(0, box.x - pad);
+  const sy = Math.max(0, box.y - pad);
+  const sw = Math.min(sourceCanvas.width - sx, box.width + pad * 2);
+  const sh = Math.min(sourceCanvas.height - sy, box.height + pad * 2);
+  thumb.getContext("2d").drawImage(sourceCanvas, sx, sy, sw, sh, 0, 0, size, size);
+  return thumb;
+}
+
+async function processBulkUpload(files) {
+  const fileList = Array.from(files).slice(0, 50);
+  bulkResults = [];
+  bulkReviewList.innerHTML = "";
+  bulkModal.hidden = false;
+  bulkEnrollBtn.disabled = true;
+
+  for (let i = 0; i < fileList.length; i++) {
+    const file = fileList[i];
+    const label = labelFromFilename(file.name);
+    bulkProgress.textContent = `Processing ${i + 1}/${fileList.length}: ${file.name}`;
+
+    try {
+      const img = await loadImageFile(file);
+      const { canvas, detections } = await detectFacesInImage(img);
+
+      if (detections.length === 0) {
+        bulkResults.push({ label, faces: [], selectedIndex: -1, status: "no-face" });
+      } else {
+        const largestIndex = detections.reduce((best, d, idx, arr) =>
+          d.detection.box.area > arr[best].detection.box.area ? idx : best, 0);
+        bulkResults.push({
+          label,
+          faces: detections.map((d, idx) => ({
+            descriptor: Array.from(d.descriptor),
+            thumb: makeFaceThumb(canvas, d.detection.box),
+          })),
+          selectedIndex: largestIndex,
+          status: "ready",
+        });
+      }
+    } catch (err) {
+      bulkResults.push({ label, faces: [], selectedIndex: -1, status: "error", error: err.message });
+    }
+  }
+
+  renderBulkReview();
+}
+
+function renderBulkReview() {
+  bulkReviewList.innerHTML = "";
+
+  const labelCounts = {};
+  bulkResults.forEach((r) => {
+    if (r.status === "ready") {
+      labelCounts[r.label] = (labelCounts[r.label] || 0) + 1;
+    }
+  });
+
+  bulkResults.forEach((result, resultIndex) => {
+    const row = document.createElement("div");
+    row.className = "bulk-review-item";
+
+    if (result.status === "no-face" || result.status === "error") {
+      row.classList.add("no-face");
+    }
+    if (labelCounts[result.label] > 1 && result.status === "ready") {
+      row.classList.add("duplicate");
+    }
+
+    const labelEl = document.createElement("span");
+    labelEl.className = "bulk-review-label";
+    labelEl.textContent = result.label;
+
+    const statusEl = document.createElement("span");
+    statusEl.className = "bulk-review-status";
+
+    if (result.status === "no-face") {
+      statusEl.textContent = "No face detected";
+    } else if (result.status === "error") {
+      statusEl.textContent = result.error || "Failed to load";
+    } else if (labelCounts[result.label] > 1) {
+      statusEl.textContent = "Duplicate label";
+    } else {
+      statusEl.textContent = `${result.faces.length} face(s)`;
+    }
+
+    row.appendChild(labelEl);
+
+    if (result.status === "ready" && result.faces.length > 0) {
+      const facesContainer = document.createElement("div");
+      facesContainer.className = "bulk-review-faces";
+
+      result.faces.forEach((face, faceIndex) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "bulk-face-option";
+        if (faceIndex === result.selectedIndex) btn.classList.add("selected");
+        btn.appendChild(face.thumb);
+        btn.addEventListener("click", () => {
+          bulkResults[resultIndex].selectedIndex = faceIndex;
+          renderBulkReview();
+        });
+        facesContainer.appendChild(btn);
+      });
+
+      row.appendChild(facesContainer);
+    }
+
+    row.appendChild(statusEl);
+    bulkReviewList.appendChild(row);
+  });
+
+  bulkProgress.textContent = `${bulkResults.filter((r) => r.status === "ready").length} of ${bulkResults.length} images ready for enrollment.`;
+  bulkEnrollBtn.disabled = !bulkResults.some((r) => r.status === "ready" && r.selectedIndex >= 0);
+}
+
+async function bulkEnroll() {
+  const entries = bulkResults
+    .filter((r) => r.status === "ready" && r.selectedIndex >= 0)
+    .map((r) => ({
+      label: r.label,
+      embedding: r.faces[r.selectedIndex].descriptor,
+      metadata: { source: "bulk-upload", captured_at: new Date().toISOString() },
+    }));
+
+  if (!entries.length) {
+    log("No faces to enroll.");
+    return;
+  }
+
+  bulkEnrollBtn.disabled = true;
+  bulkProgress.textContent = `Enrolling ${entries.length} face(s)...`;
+
+  try {
+    const response = await fetch(`${API_URL}/enroll/bulk`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entries }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Bulk enroll failed: ${response.status}`);
+    }
+
+    const data = await response.json();
+    log(`Bulk enroll complete: ${data.enrolled} saved, ${data.errors} errors.`);
+
+    data.results.forEach((r) => {
+      if (r.status === "error") {
+        log(`  Error enrolling ${r.label}: ${r.detail}`);
+      }
+    });
+
+    bulkModal.hidden = true;
+  } catch (err) {
+    log(`Bulk enroll error: ${err.message}`);
+    bulkEnrollBtn.disabled = false;
+  }
+}
+
 overlayCanvas.addEventListener("click", (event) => {
   if (!faceDetections.length) {
     return;
@@ -354,6 +562,20 @@ stopCameraBtn.addEventListener("click", stopCamera);
 detectBtn.addEventListener("click", detectFaces);
 lookupBtn.addEventListener("click", lookupFace);
 enrollBtn.addEventListener("click", enrollFace);
+
+bulkUploadInput.addEventListener("change", (event) => {
+  const files = event.target.files;
+  if (files.length) {
+    processBulkUpload(files);
+  }
+  bulkUploadInput.value = "";
+});
+
+bulkEnrollBtn.addEventListener("click", bulkEnroll);
+bulkCancelBtn.addEventListener("click", () => {
+  bulkModal.hidden = true;
+  bulkResults = [];
+});
 
 window.addEventListener("beforeunload", stopCamera);
 loadModels();
