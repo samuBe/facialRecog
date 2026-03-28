@@ -4,18 +4,20 @@ const MODEL_URLS = [
 ];
 const API_URL = "http://localhost:8000";
 
-const fheToggle = document.getElementById("fheToggle");
+const fheToggleBtn = document.getElementById("fheToggleBtn");
+const fheDot = document.getElementById("fheDot");
 const fheLabel = document.getElementById("fheLabel");
 let fheMode = false;
 
 function setFheStatus(on) {
   fheMode = on;
-  fheToggle.checked = on;
+  fheDot.classList.toggle("active", on);
+  fheToggleBtn.classList.toggle("active", on);
   fheLabel.textContent = on ? "FHE ON" : "FHE Mode";
 }
 
-fheToggle.addEventListener("change", async () => {
-  if (fheToggle.checked) {
+fheToggleBtn.addEventListener("click", async () => {
+  if (!fheMode) {
     fheLabel.textContent = "Checking...";
     try {
       const r = await fetch(`${API_URL}/health`);
