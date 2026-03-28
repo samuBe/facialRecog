@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-28
 **Status:** Approved
-**Scope:** Phase 1 — Server-side FHE with HEIR-compiled dot product
+**Scope:** Phase 1 — Server-side FHE with openfhe-python (HEIR stretch goal)
 
 ## Goal
 
@@ -21,7 +21,7 @@ face-api.js                      POST /fhe/enroll
 
 face-api.js                      POST /fhe/search
   → 128 floats (plaintext) ────→   openfhe-python encrypts query
-                                    HEIR dot-product on ciphertext pairs
+                                    homomorphic dot-product on ciphertext pairs
                                     decrypts similarity scores
                                     returns ranked matches
 
@@ -45,33 +45,32 @@ Wraps openfhe-python for CKKS operations:
 - `serialize_key(key)` → bytes, `deserialize_key(bytes)` → key
 - `load_ciphertext(bytes, crypto_context)` → ciphertext object
 
-Keys are generated once at server startup and held in memory. The crypto context and keys persist for the server's lifetime.
+**Key persistence:** Keys are generated on first startup, serialized to `server/fhe/keys/` (secret_key.bin, public_key.bin, eval_keys.bin, crypto_context.bin). On subsequent startups, keys are loaded from disk. If key files are missing or corrupted, new keys are generated and all existing `fhe_identities` rows are purged (ciphertext encrypted under old keys is unrecoverable).
+
+**State storage:** Crypto context and keys are stored on `app.state` during startup, accessed by route handlers via FastAPI dependency injection.
 
 **CKKS Parameters (starting point):**
-- Multiplicative depth: 2 (one multiply + accumulate via rotation-and-sum)
+- Multiplicative depth: 2 (depth 1 for element-wise multiply, depth 2 as headroom for rescaling overhead)
 - Ring dimension: 8192 (may increase to 16384 if accuracy requires it)
 - Scaling mod size: 40 bits
 - First mod size: 50 bits
 - Batch size: 128 (matches embedding dimension)
 
-### 2. HEIR Dot Product — `server/fhe/heir_dot_product/`
+### 2. Homomorphic Dot Product — `server/fhe/dot_product.py`
 
-Google HEIR compiles a high-level dot product function targeting the OpenFHE backend.
+**Default implementation (Phase 1):** Pure openfhe-python using the standard rotation-and-sum pattern:
+- Element-wise homomorphic multiplication of two ciphertexts
+- Rotation-and-sum accumulation (log2(128) = 7 rotations + 7 additions)
 
-**Source (`dot_product.mlir` or equivalent HEIR input):**
-A function that takes two encrypted 128-element vectors and returns their dot product, using:
-- Element-wise homomorphic multiplication
-- Rotation-and-sum accumulation pattern (log2(128) = 7 rotations)
+This is implemented as a Python function calling openfhe-python's `EvalMult`, `EvalRotate`, and `EvalAdd` operations directly.
 
-**Build output:** Shared library (`.so` / `.dylib`) exposing a C-callable function.
+**HEIR stretch goal:** Compile the same dot product logic via Google HEIR targeting the OpenFHE backend. This would produce a C++ shared library (`.dylib` on macOS) that operates on serialized ciphertext byte buffers. Integration requires a C-wrapper layer to marshal between Python and the HEIR-generated code (serialize ciphertext → pass byte buffer → deserialize result). This is deferred unless the openfhe-python path proves too slow.
 
-**Integration:** FastAPI calls the compiled library via ctypes:
+The `dot_product()` function interface is the same regardless of backend:
 ```python
-lib = ctypes.CDLL("./heir_dot_product.so")
-result_ciphertext = lib.dot_product(ct_a, ct_b, eval_keys, crypto_context)
+def dot_product(ct_a, ct_b, crypto_context, eval_keys) -> ciphertext:
+    """Compute dot product of two encrypted 128-element vectors."""
 ```
-
-**Fallback:** If HEIR compilation proves problematic during implementation, fall back to openfhe-python's native operations for the dot product. The interface stays the same — only the implementation changes.
 
 ### 3. FHE API Routes — `server/fhe_routes.py`
 
@@ -117,7 +116,7 @@ New FastAPI router mounted at `/fhe/`.
 1. Validate and L2-normalize the query embedding
 2. Encrypt query with CKKS
 3. Load all stored ciphertexts from `fhe_identities`
-4. For each stored ciphertext: compute dot product via HEIR-compiled function
+4. For each stored ciphertext: compute homomorphic dot product
 5. Decrypt each result to get similarity score (single float)
 6. Filter by threshold, sort descending, take top_k
 
@@ -166,9 +165,9 @@ A simple UI toggle could switch between `/enroll` and `/fhe/enroll` (optional, l
 - `openfhe` (openfhe-python) — CKKS encryption, decryption, key generation
 - Existing: FastAPI, uvicorn, numpy, pydantic
 
-### Build tools
+### Build tools (HEIR stretch goal only)
 - Google HEIR — compile dot product to OpenFHE-backed shared library
-- CMake / Bazel (HEIR build system)
+- Bazel (HEIR build system)
 - OpenFHE C++ library (HEIR compilation target)
 
 ## Performance Considerations
@@ -183,13 +182,15 @@ A simple UI toggle could switch between `/enroll` and `/fhe/enroll` (optional, l
 
 - FHE operations that fail (e.g., parameter mismatch, corrupted ciphertext) return 500 with a generic error message.
 - Validation errors (bad embedding length, empty label) return 422, same as existing endpoints.
-- If HEIR library fails to load at startup, log a warning and disable `/fhe/` endpoints (server still serves plaintext endpoints).
+- If FHE initialization fails at startup (e.g., openfhe not installed), log a warning and disable `/fhe/` endpoints. Server still serves plaintext endpoints.
+- `/health` endpoint extended to report FHE status: `{"status": "ok", "fhe": "ok"}` or `{"status": "ok", "fhe": "disabled"}`.
 
 ## Testing Strategy
 
 - **Unit tests:** Encrypt → dot product → decrypt roundtrip with known vectors. Verify similarity scores match plaintext computation within CKKS approximation tolerance (~1e-4).
 - **Integration tests:** Full enroll + search flow through FastAPI endpoints. Compare FHE results against plaintext endpoint results for same inputs.
 - **Accuracy validation:** Run existing seed embeddings through both pipelines, verify match rankings are identical.
+- **Threshold tolerance:** CKKS introduces approximation noise (~1e-4). For scores near the threshold boundary, this could flip match/no-match decisions. Tests should verify that FHE and plaintext pipelines produce the same ranking order, and the FHE threshold should be set slightly below the plaintext threshold (e.g., `threshold - 0.001`) to account for noise.
 
 ## Future Work (Phase 2)
 
@@ -202,15 +203,13 @@ A simple UI toggle could switch between `/enroll` and `/fhe/enroll` (optional, l
 
 ```
 server/
-├── main.py                          # Existing — unchanged
+├── main.py                          # Existing — adds FHE router import + startup hook
 ├── fhe_routes.py                    # New FHE API router
 ├── fhe/
 │   ├── __init__.py
 │   ├── crypto.py                    # OpenFHE CKKS wrapper
-│   ├── heir_dot_product/
-│   │   ├── dot_product.mlir         # HEIR source
-│   │   ├── CMakeLists.txt           # Build config
-│   │   └── libheir_dot_product.so   # Compiled output
+│   ├── dot_product.py               # Homomorphic dot product (openfhe-python)
+│   ├── keys/                        # Serialized keys (gitignored)
 │   └── db.py                        # FHE identities DB operations
 └── requirements.txt                 # Updated with openfhe
 ```
