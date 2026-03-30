@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -163,14 +164,25 @@ app.add_middleware(
 )
 
 _fhe_available = False
+_fhe_unavailable_reason: str | None = None
 try:
-    from fhe_routes import router as fhe_router
-    from fhe.db import init_fhe_db, set_db_path
-    from fhe.ops import fhe_dot_product_ctx
+    from fhe.runtime import native_fhe_enabled, native_fhe_unavailable_reason
 
-    app.include_router(fhe_router)
-    _fhe_available = True
+    if native_fhe_enabled():
+        from fhe_routes import router as fhe_router
+        from fhe.db import init_fhe_db, set_db_path
+        from fhe.ops import fhe_dot_product_ctx
+
+        app.include_router(fhe_router)
+        _fhe_available = True
+    else:
+        _fhe_unavailable_reason = native_fhe_unavailable_reason()
+        fhe_logger.warning(
+            "Native FHE endpoints disabled: %s",
+            _fhe_unavailable_reason,
+        )
 except ImportError:
+    _fhe_unavailable_reason = "heir_py not installed"
     fhe_logger.warning("heir_py not installed — FHE endpoints disabled")
 
 try:
@@ -187,23 +199,44 @@ def startup() -> None:
     seed_if_empty()
 
     if _fhe_available:
-        fhe_logger.info("Initializing FHE subsystem (compilation takes ~7s)...")
         set_db_path(DB_PATH)
         with get_connection() as conn:
             init_fhe_db(conn)
             conn.execute("DELETE FROM fhe_identities")
             conn.commit()
             fhe_logger.info("Cleared stale FHE identities (keys regenerated)")
-        try:
-            fhe_dot_product_ctx()
-            fhe_logger.info("FHE subsystem ready")
-        except Exception:
-            fhe_logger.exception("FHE initialization failed")
+
+        # Avoid blocking the whole API on heavyweight native FHE setup.
+        # HEIR setup is not thread-safe in this environment, so we warm it on
+        # startup by default before request handling moves work onto worker threads.
+        eager_fhe_init = os.getenv("FACIALRECOG_EAGER_FHE_INIT", "1").lower() not in {
+            "0",
+            "false",
+            "no",
+            "off",
+        }
+        if eager_fhe_init:
+            fhe_logger.info("Initializing FHE subsystem eagerly at startup...")
+            try:
+                fhe_dot_product_ctx()
+                fhe_logger.info("FHE subsystem ready")
+            except Exception:
+                fhe_logger.exception("FHE initialization failed")
+        else:
+            fhe_logger.warning(
+                "Skipping eager FHE initialization at startup; "
+                "set FACIALRECOG_EAGER_FHE_INIT=0 only if you intentionally want lazy init"
+            )
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok", "fhe": "ok" if _fhe_available else "disabled"}
+def health() -> dict[str, str | None]:
+    fhe_reason = native_fhe_unavailable_reason()
+    return {
+        "status": "ok",
+        "fhe": "ok" if _fhe_available and fhe_reason is None else "disabled",
+        "fhe_reason": fhe_reason if _fhe_available else _fhe_unavailable_reason,
+    }
 
 
 @app.get("/identities")
@@ -291,7 +324,14 @@ def serve_index() -> FileResponse:
 
 @app.get("/fhe-toy")
 def serve_fhe_toy() -> FileResponse:
-    return FileResponse(CLIENT_DIR / "fhe-toy.html")
+    return FileResponse(
+        CLIENT_DIR / "fhe-toy.html",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 app.mount("/static", StaticFiles(directory=CLIENT_DIR), name="static")

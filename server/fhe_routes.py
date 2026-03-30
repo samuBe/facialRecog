@@ -13,13 +13,15 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from fhe.crypto import (
+    StaleCiphertextError,
     decrypt_result,
     deserialize_ciphertext,
     encrypt_embedding,
     encrypt_query,
     eval_dot_product,
 )
-from fhe.db import get_fhe_connection, load_fhe_identities, upsert_fhe_identity
+from fhe.db import delete_fhe_identities, get_fhe_connection, load_fhe_identities, upsert_fhe_identity
+from fhe.runtime import claim_native_fhe
 
 logger = logging.getLogger("fhe")
 
@@ -66,8 +68,39 @@ def _normalize(embedding: list[float]) -> np.ndarray:
     return arr / norm
 
 
+def _require_native_fhe() -> None:
+    reason = claim_native_fhe()
+    if reason is not None:
+        raise HTTPException(status_code=503, detail=reason)
+
+
+def _prune_stale_identities(conn, identities: list[dict[str, Any]], *, stream: bool = False) -> tuple[list[dict[str, Any]], list[str]]:
+    active: list[dict[str, Any]] = []
+    stale_labels: list[str] = []
+
+    for identity in identities:
+        try:
+            deserialize_ciphertext(identity["ciphertext"])
+        except StaleCiphertextError:
+            stale_labels.append(identity["label"])
+        else:
+            active.append(identity)
+
+    if stale_labels:
+        removed = delete_fhe_identities(conn, stale_labels)
+        logger.warning(
+            "[search%s] Removed %d stale FHE identities whose ciphertext tokens no longer exist in memory: %s",
+            "/stream" if stream else "",
+            removed,
+            ", ".join(stale_labels),
+        )
+
+    return active, stale_labels
+
+
 @router.post("/enroll")
 def fhe_enroll(payload: FHEEnrollRequest) -> dict[str, str]:
+    _require_native_fhe()
     t_start = time.time()
     try:
         unit_vec = _normalize(payload.embedding)
@@ -88,6 +121,7 @@ def fhe_enroll(payload: FHEEnrollRequest) -> dict[str, str]:
 
 @router.post("/search", response_model=FHESearchResponse)
 def fhe_search(payload: FHESearchRequest) -> FHESearchResponse:
+    _require_native_fhe()
     t_start = time.time()
     try:
         query_vec = _normalize(payload.embedding)
@@ -99,9 +133,13 @@ def fhe_search(payload: FHESearchRequest) -> FHESearchResponse:
 
     with get_fhe_connection() as conn:
         identities = load_fhe_identities(conn)
+        identities, stale_labels = _prune_stale_identities(conn, identities)
 
     if not identities:
-        logger.info("[search] No FHE identities enrolled")
+        if stale_labels:
+            logger.info("[search] All available FHE identities were stale and have been removed")
+        else:
+            logger.info("[search] No FHE identities enrolled")
         return FHESearchResponse(count=0, best_match=None, matches=[])
 
     logger.info("[search] Comparing against %d encrypted identities", len(identities))
@@ -135,6 +173,7 @@ def fhe_search(payload: FHESearchRequest) -> FHESearchResponse:
 @router.post("/search/stream")
 def fhe_search_stream(payload: FHESearchRequest) -> StreamingResponse:
     """SSE endpoint that streams progress during FHE search."""
+    _require_native_fhe()
     try:
         query_vec = _normalize(payload.embedding)
     except ValueError as exc:
@@ -148,9 +187,12 @@ def fhe_search_stream(payload: FHESearchRequest) -> StreamingResponse:
 
         with get_fhe_connection() as conn:
             identities = load_fhe_identities(conn)
+            identities, stale_labels = _prune_stale_identities(conn, identities, stream=True)
 
         total = len(identities)
         if total == 0:
+            if stale_labels:
+                yield f"data: {json.dumps({'type': 'status', 'message': f'Removed {len(stale_labels)} stale encrypted identities. Re-enroll them to search again.'})}\n\n"
             yield f"data: {json.dumps({'type': 'result', 'count': 0, 'best_match': None, 'matches': []})}\n\n"
             return
 
@@ -184,6 +226,7 @@ def fhe_search_stream(payload: FHESearchRequest) -> StreamingResponse:
 @router.post("/enroll/bulk")
 def fhe_enroll_bulk(payload: dict) -> dict:
     """Bulk enroll — same as /enroll/bulk but encrypts each embedding."""
+    _require_native_fhe()
     entries = payload.get("entries", [])
     if not entries or len(entries) > 50:
         raise HTTPException(status_code=422, detail="entries must be 1-50 items")
@@ -217,6 +260,7 @@ def fhe_enroll_bulk(payload: dict) -> dict:
 
 @router.get("/identities")
 def fhe_identities() -> dict[str, Any]:
+    _require_native_fhe()
     with get_fhe_connection() as conn:
         identities = load_fhe_identities(conn)
 

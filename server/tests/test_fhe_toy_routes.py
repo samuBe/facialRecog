@@ -1,13 +1,19 @@
 """Tests for client-side FHE toy endpoints."""
 import base64
 import pytest
-import openfhe
 from fastapi.testclient import TestClient
 from main import app
 
 
+def _openfhe():
+    import openfhe
+
+    return openfhe
+
+
 def make_test_context():
     """Create CKKS context matching the toy parameters."""
+    openfhe = _openfhe()
     params = openfhe.CCParamsCKKSRNS()
     params.SetMultiplicativeDepth(1)
     params.SetScalingModSize(50)
@@ -44,6 +50,7 @@ def ckks_setup():
 
 def _b64(obj):
     """Serialize an OpenFHE object to base64 string."""
+    openfhe = _openfhe()
     return base64.b64encode(openfhe.Serialize(obj, openfhe.BINARY)).decode()
 
 
@@ -73,6 +80,7 @@ def test_toy_add_no_keys(client):
 
 def test_toy_add_full_roundtrip(client, ckks_setup):
     """Full: upload keys -> send CTs -> get encrypted sum -> decrypt locally ~ 3.0"""
+    openfhe = _openfhe()
     cc = ckks_setup["cc"]
     keys = ckks_setup["keys"]
 

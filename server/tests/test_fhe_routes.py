@@ -1,5 +1,14 @@
 import pytest
+import pickle
 from fastapi.testclient import TestClient
+
+from fhe.runtime import native_fhe_enabled, native_fhe_unavailable_reason
+
+
+pytestmark = pytest.mark.skipif(
+    not native_fhe_enabled(),
+    reason=native_fhe_unavailable_reason() or "native FHE unavailable",
+)
 
 
 @pytest.fixture(scope="module")
@@ -86,3 +95,30 @@ def test_fhe_full_roundtrip(client):
     assert data["count"] >= 1
     assert data["best_match"]["label"] == "Alpha"
     assert data["best_match"]["similarity"] > 0.99
+
+
+def test_fhe_search_stream_prunes_stale_rows_without_breaking_stream(client):
+    from fhe.db import get_fhe_connection, load_fhe_identities, upsert_fhe_identity
+
+    stale_token = pickle.dumps(b"missing-token")
+    with get_fhe_connection() as conn:
+        upsert_fhe_identity(conn, "Stale Agent", stale_token, {"role": "stale"})
+
+    import numpy as np
+    np.random.seed(11)
+    emb = np.random.randn(128).tolist()
+
+    with client.stream("POST", "/fhe/search/stream", json={
+        "embedding": emb,
+        "top_k": 5,
+        "threshold": 0.35,
+    }) as resp:
+        assert resp.status_code == 200
+        body = "".join(resp.iter_text())
+
+    assert '"type": "result"' in body
+    assert "Error in input stream" not in body
+
+    with get_fhe_connection() as conn:
+        labels = [row["label"] for row in load_fhe_identities(conn)]
+    assert "Stale Agent" not in labels

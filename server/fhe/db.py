@@ -77,3 +77,17 @@ def load_fhe_identities(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             "created_at": row["created_at"],
         })
     return result
+
+
+def delete_fhe_identities(conn: sqlite3.Connection, labels: list[str], *, commit: bool = True) -> int:
+    if not labels:
+        return 0
+
+    placeholders = ",".join("?" for _ in labels)
+    cursor = conn.execute(
+        f"DELETE FROM {FHE_TABLE} WHERE label IN ({placeholders})",
+        labels,
+    )
+    if commit:
+        conn.commit()
+    return cursor.rowcount

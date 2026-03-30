@@ -24,7 +24,8 @@ async function toggleFhe() {
       const data = await r.json();
       if (data.fhe !== "ok") {
         setFheStatus(false);
-        log("FHE backend not available — server reports fhe: " + data.fhe);
+        const reason = data.fhe_reason ? ` (${data.fhe_reason})` : "";
+        log("FHE backend not available — server reports fhe: " + data.fhe + reason);
         return;
       }
     } catch (err) {

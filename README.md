@@ -18,6 +18,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 Open http://localhost:8000.
 
 > FHE compilation takes ~7 seconds on first startup. Watch the logs for "FHE subsystem ready".
+> On Python 3.13+, the native `heir_py`/OpenFHE path is currently disabled by default in this app because local setup is segfaulting. Plaintext routes still work; use Python 3.12 for native `/fhe/*` routes, or override with `FACIALRECOG_ENABLE_UNSAFE_FHE=1` if you explicitly want to test the crashing path.
 
 ## Usage
 

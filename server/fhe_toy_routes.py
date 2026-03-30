@@ -6,9 +6,10 @@ import base64
 import logging
 from typing import Any
 
-import openfhe
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+
+from fhe.runtime import claim_toy_fhe
 
 logger = logging.getLogger("fhe.toy")
 
@@ -16,6 +17,12 @@ router = APIRouter(prefix="/fhe", tags=["fhe-toy"])
 
 # In-memory store for client keys (single-client toy)
 _client_state: dict[str, Any] = {}
+
+
+def _openfhe():
+    import openfhe
+
+    return openfhe
 
 
 class KeyUploadRequest(BaseModel):
@@ -32,7 +39,12 @@ class ToyAddRequest(BaseModel):
 @router.post("/keys")
 def upload_keys(payload: KeyUploadRequest) -> dict[str, str]:
     """Receive and cache client-generated CKKS keys."""
+    reason = claim_toy_fhe()
+    if reason is not None:
+        raise HTTPException(status_code=503, detail=reason)
+
     try:
+        openfhe = _openfhe()
         cc_bytes = base64.b64decode(payload.crypto_context)
         pk_bytes = base64.b64decode(payload.public_key)
 
@@ -58,6 +70,10 @@ def upload_keys(payload: KeyUploadRequest) -> dict[str, str]:
 @router.post("/toy-add")
 def toy_add(payload: ToyAddRequest) -> dict[str, str]:
     """Perform homomorphic addition on two client-encrypted ciphertexts."""
+    reason = claim_toy_fhe()
+    if reason is not None:
+        raise HTTPException(status_code=503, detail=reason)
+
     if "cc" not in _client_state:
         raise HTTPException(
             status_code=400,
@@ -65,6 +81,7 @@ def toy_add(payload: ToyAddRequest) -> dict[str, str]:
         )
 
     try:
+        openfhe = _openfhe()
         cc = _client_state["cc"]
 
         ct_a_bytes = base64.b64decode(payload.ct_a)

@@ -175,10 +175,22 @@
         return bytes;
       }
 
+      function copyVecToJs(vec) {
+        return new Array(vec.size()).fill(0).map((_, idx) => vec.get(idx));
+      }
+
       /* ── state ── */
       let openfhe = null;
       let cc = null;
       let keys = null;
+
+      function requireEnum(group, key) {
+        const value = openfhe?.[group]?.[key];
+        if (value === undefined) {
+          throw new Error(`openfhe.${group}.${key} is not available in this WASM build`);
+        }
+        return value;
+      }
 
       /* ── step 1: load WASM ── */
       async function loadWasm() {
@@ -209,14 +221,14 @@
           params.SetScalingModSize(50);
           params.SetRingDim(8192);
           params.SetBatchSize(4096);
-          params.SetSecurityLevel(openfhe.HEStd_128_classic);
-          params.SetScalingTechnique(openfhe.FLEXIBLEAUTO);
+          params.SetSecurityLevel(requireEnum('SecurityLevel', 'HEStd_128_classic'));
+          params.SetScalingTechnique(requireEnum('ScalingTechnique', 'FLEXIBLEAUTO'));
           log('Params set. Generating context...');
 
           cc = openfhe.GenCryptoContextCKKS(params);
-          cc.Enable(openfhe.PKE);
-          cc.Enable(openfhe.KEYSWITCH);
-          cc.Enable(openfhe.LEVELEDSHE);
+          cc.Enable(requireEnum('PKESchemeFeature', 'PKE'));
+          cc.Enable(requireEnum('PKESchemeFeature', 'KEYSWITCH'));
+          cc.Enable(requireEnum('PKESchemeFeature', 'LEVELEDSHE'));
           log('Context created and features enabled', 'ok');
 
           log('Generating keypair (this may take a moment)...');
@@ -333,7 +345,8 @@
           log('Decrypting result...');
           const ptResult = cc.Decrypt(keys.secretKey, ctResult);
           ptResult.SetLength(1);
-          const val = ptResult.GetRealPackedValue()[0];
+          const values = copyVecToJs(ptResult.GetRealPackedValue());
+          const val = values[0];
           const rounded = Math.round(val * 1000) / 1000;
           log(`Decrypted value: ${val}`, 'ok');
           log(`Rounded: ${rounded}`, 'ok');

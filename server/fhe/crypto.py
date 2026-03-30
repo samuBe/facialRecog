@@ -22,6 +22,10 @@ logger = logging.getLogger("fhe")
 _CT_STORE: dict[str, Any] = {}
 
 
+class StaleCiphertextError(KeyError):
+    """Raised when a stored ciphertext token no longer exists in process memory."""
+
+
 def _store_ct(enc_value: Any) -> bytes:
     """Persist an EncValue in the in-process store; return an opaque token."""
     key = str(uuid.uuid4())
@@ -63,7 +67,7 @@ def deserialize_ciphertext(ct_bytes: bytes) -> Any:
     token = pickle.loads(ct_bytes)
     key = token.decode()
     if key not in _CT_STORE:
-        raise KeyError(f"Ciphertext token not found in store: {key}")
+        raise StaleCiphertextError(f"Ciphertext token not found in store: {key}")
     return _CT_STORE[key]
 
 

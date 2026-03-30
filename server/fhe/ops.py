@@ -6,6 +6,7 @@ import logging
 from functools import lru_cache
 
 from heir import compile
+from fhe.runtime import mark_native_fhe_initialized
 
 logger = logging.getLogger("fhe")
 
@@ -31,5 +32,6 @@ def fhe_dot_product_ctx():
     ctx = compile(mlir_str=DOT_PRODUCT_MLIR, scheme="ckks")
     logger.info("HEIR compilation complete. Running key generation...")
     ctx.setup()
+    mark_native_fhe_initialized()
     logger.info("CKKS key generation complete. FHE ready.")
     return ctx
