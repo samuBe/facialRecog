@@ -1,0 +1,3 @@
+# Generated binary fixtures (re-create by running the serialization tests)
+*.bin
+wasm_originated/
