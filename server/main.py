@@ -223,6 +223,16 @@ def startup() -> None:
         with get_connection() as conn:
             init_fhe_db(conn)
             conn.execute("DELETE FROM fhe_identities")
+            # Create openfhe_identities table for client-side encrypted enrollments
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS openfhe_identities (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    label TEXT NOT NULL UNIQUE,
+                    ciphertext BLOB NOT NULL,
+                    metadata TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             conn.commit()
             fhe_logger.info("Cleared stale FHE identities (keys regenerated)")
 

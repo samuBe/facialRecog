@@ -135,6 +135,7 @@ async function ensureOpenFheClientSession() {
     openFheState.cc.Enable(requireOpenFheEnum("PKESchemeFeature", "LEVELEDSHE"));
 
     openFheState.keys = openFheState.cc.KeyGen();
+    openFheState.cc.EvalMultKeyGen(openFheState.keys.secretKey);
     openFheState.cc.EvalAtIndexKeyGen(openFheState.keys.secretKey, OPENFHE_CONFIG.rotationSteps);
 
     showProgress("Creating OpenFHE server session...", 40);
@@ -160,6 +161,9 @@ async function ensureOpenFheClientSession() {
     const autoBuf = openFheState.cc.SerializeEvalAutomorphismKeyToBuffer(
       openFheState.module.SerType.BINARY
     );
+    const multBuf = openFheState.cc.SerializeEvalMultKeyToBuffer(
+      openFheState.module.SerType.BINARY
+    );
 
     const keyResp = await fetch(`${API_URL}/fhe-openfhe/session/${openFheState.sessionId}/keys`, {
       method: "POST",
@@ -168,6 +172,7 @@ async function ensureOpenFheClientSession() {
         crypto_context: uint8ToBase64(ccBuf),
         public_key: uint8ToBase64(pkBuf),
         eval_automorphism_key: uint8ToBase64(autoBuf),
+        eval_mult_key: uint8ToBase64(multBuf),
       }),
     });
     if (!keyResp.ok) {
@@ -722,25 +727,52 @@ async function enrollFace() {
   }
 
   try {
-    const response = await fetch(`${apiPath("/enroll")}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        label,
-        embedding,
-        metadata: {
-          source: "browser-client",
-          captured_at: new Date().toISOString(),
-        },
-      }),
-    });
+    if (computeMode === "openfhe") {
+      await ensureOpenFheClientSession();
+      log("Encrypting embedding in browser...");
+      const encryptedEmbedding = encryptOpenFheEmbedding(embedding);
 
-    if (!response.ok) {
-      const errorBody = await response.json();
-      throw new Error(errorBody.detail || `Enroll failed: ${response.status}`);
+      const response = await fetch(`${API_URL}/fhe-openfhe/enroll`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: openFheState.sessionId,
+          label,
+          encrypted_embedding: encryptedEmbedding,
+          metadata: {
+            source: "browser-client",
+            captured_at: new Date().toISOString(),
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.json();
+        throw new Error(errorBody.detail || `Enroll failed: ${response.status}`);
+      }
+
+      log(`Enrollment updated for ${label} (client-side encrypted).`);
+    } else {
+      const response = await fetch(`${apiPath("/enroll")}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label,
+          embedding,
+          metadata: {
+            source: "browser-client",
+            captured_at: new Date().toISOString(),
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.json();
+        throw new Error(errorBody.detail || `Enroll failed: ${response.status}`);
+      }
+
+      log(`Enrollment updated for ${label}.`);
     }
-
-    log(`Enrollment updated for ${label}.`);
   } catch (error) {
     log(error.message);
   }
@@ -908,41 +940,71 @@ function renderBulkReview() {
 }
 
 async function bulkEnroll() {
-  const entries = bulkResults
-    .filter((r) => r.status === "ready" && r.selectedIndex >= 0)
-    .map((r) => ({
-      label: r.label,
-      embedding: r.faces[r.selectedIndex].descriptor,
-      metadata: { source: "bulk-upload", captured_at: new Date().toISOString() },
-    }));
+  const readyResults = bulkResults.filter((r) => r.status === "ready" && r.selectedIndex >= 0);
 
-  if (!entries.length) {
+  if (!readyResults.length) {
     log("No faces to enroll.");
     return;
   }
 
   bulkEnrollBtn.disabled = true;
-  bulkProgress.textContent = `Enrolling ${entries.length} face(s)...`;
+  bulkProgress.textContent = `Enrolling ${readyResults.length} face(s)...`;
 
   try {
-    const response = await fetch(`${apiPath("/enroll/bulk")}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ entries }),
-    });
+    if (computeMode === "openfhe") {
+      await ensureOpenFheClientSession();
+      log("Encrypting embeddings in browser...");
 
-    if (!response.ok) {
-      throw new Error(`Bulk enroll failed: ${response.status}`);
-    }
+      const entries = readyResults.map((r) => ({
+        label: r.label,
+        encrypted_embedding: encryptOpenFheEmbedding(r.faces[r.selectedIndex].descriptor),
+        metadata: { source: "bulk-upload", captured_at: new Date().toISOString() },
+      }));
 
-    const data = await response.json();
-    log(`Bulk enroll complete: ${data.enrolled} saved, ${data.errors} errors.`);
+      const response = await fetch(`${API_URL}/fhe-openfhe/enroll/bulk`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: openFheState.sessionId, entries }),
+      });
 
-    data.results.forEach((r) => {
-      if (r.status === "error") {
-        log(`  Error enrolling ${r.label}: ${r.detail}`);
+      if (!response.ok) {
+        throw new Error(`Bulk enroll failed: ${response.status}`);
       }
-    });
+
+      const data = await response.json();
+      log(`Bulk enroll complete (encrypted): ${data.enrolled} saved, ${data.errors} errors.`);
+
+      data.results.forEach((r) => {
+        if (r.status === "error") {
+          log(`  Error enrolling ${r.label}: ${r.detail}`);
+        }
+      });
+    } else {
+      const entries = readyResults.map((r) => ({
+        label: r.label,
+        embedding: r.faces[r.selectedIndex].descriptor,
+        metadata: { source: "bulk-upload", captured_at: new Date().toISOString() },
+      }));
+
+      const response = await fetch(`${apiPath("/enroll/bulk")}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entries }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Bulk enroll failed: ${response.status}`);
+      }
+
+      const data = await response.json();
+      log(`Bulk enroll complete: ${data.enrolled} saved, ${data.errors} errors.`);
+
+      data.results.forEach((r) => {
+        if (r.status === "error") {
+          log(`  Error enrolling ${r.label}: ${r.detail}`);
+        }
+      });
+    }
 
     bulkModal.hidden = true;
     bulkResults = [];

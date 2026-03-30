@@ -188,6 +188,16 @@ class OpenFHEClientSession:
 
         return acc
 
+    def eval_inner_product(self, ct_a: Any, ct_b: Any) -> Any:
+        """Ciphertext-ciphertext inner product. Server never sees plaintext."""
+        self.ensure_ready()
+        acc = self.cc.EvalMult(ct_a, ct_b)
+
+        for step in ROTATION_STEPS:
+            acc = self.cc.EvalAdd(acc, self.cc.EvalAtIndex(acc, step))
+
+        return acc
+
 
 _CLIENT_SESSIONS: dict[str, OpenFHEClientSession] = {}
 
