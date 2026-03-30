@@ -3,3 +3,20 @@ uvicorn[standard]==0.34.0
 numpy==2.2.3
 pydantic==2.10.6
 heir_py==0.0.3
+pybind11>=2.11
+# openfhe-python v1.5.0.3 — no pip wheel for macOS ARM64; build from source:
+#   cd vendor/openfhe-development && git checkout v1.5.0.3
+#   mkdir build && cd build
+#   cmake .. -DBUILD_SHARED=ON -DBUILD_STATIC=OFF -DBUILD_BENCHMARKS=OFF \
+#     -DBUILD_UNITTESTS=OFF -DBUILD_EXAMPLES=OFF \
+#     -DCMAKE_INSTALL_PREFIX=../../../vendor/openfhe-install \
+#     -DCMAKE_CXX_FLAGS="-I$(brew --prefix libomp)/include"
+#   make -j$(sysctl -n hw.ncpu) && make install
+#   cd ../../openfhe-python && mkdir build && cd build
+#   cmake .. -DOpenFHE_DIR=../../openfhe-install/lib/OpenFHE \
+#     -Dpybind11_DIR=$(python -c "import pybind11; print(pybind11.get_cmake_dir())") \
+#     -DPython_EXECUTABLE=$(which python) -DPython_ROOT_DIR=$(python -c "import sys; print(sys.prefix)") \
+#     -DCMAKE_INSTALL_PREFIX=$(python -c "import sys; print(sys.prefix)")
+#   make -j$(sysctl -n hw.ncpu) && make install
+#   cp <venv>/openfhe.cpython-*-darwin.so <venv>/lib/python3.13/site-packages/
+#   install_name_tool -add_rpath <path-to>/vendor/openfhe-install/lib <so-file>
