@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FHE Toy Test — Tactical Face Scanner</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Share+Tech+Mono&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+      body {
+        background: #0a0e14;
+        color: #c5d0dc;
+        font-family: 'Share Tech Mono', monospace;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 2rem 1rem;
+      }
+
+      h1 {
+        font-family: 'Orbitron', sans-serif;
+        color: #00e5c0;
+        font-size: 1.6rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        margin-bottom: 0.25rem;
+      }
+
+      .kicker {
+        font-size: 0.7rem;
+        color: #5a6a7a;
+        text-transform: uppercase;
+        letter-spacing: 0.2em;
+        margin-bottom: 0.25rem;
+      }
+
+      .container {
+        max-width: 720px;
+        width: 100%;
+      }
+
+      header {
+        border-bottom: 1px solid #1a2030;
+        padding-bottom: 1rem;
+        margin-bottom: 1.5rem;
+      }
+
+      .btn-row {
+        display: flex;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        margin-bottom: 1.5rem;
+      }
+
+      button {
+        font-family: 'Share Tech Mono', monospace;
+        background: #141a24;
+        color: #00e5c0;
+        border: 1px solid #00e5c0;
+        padding: 0.6rem 1.2rem;
+        cursor: pointer;
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        transition: background 0.15s, color 0.15s;
+      }
+
+      button:hover:not(:disabled) {
+        background: #00e5c0;
+        color: #0a0e14;
+      }
+
+      button:disabled {
+        opacity: 0.35;
+        cursor: not-allowed;
+        border-color: #2a3a4a;
+        color: #2a3a4a;
+      }
+
+      .log-container {
+        background: #0d1117;
+        border: 1px solid #1a2030;
+        padding: 1rem;
+        max-height: 60vh;
+        overflow-y: auto;
+        font-size: 0.8rem;
+        line-height: 1.6;
+      }
+
+      .log-container .log-line {
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+
+      .log-line.info { color: #8a9ab0; }
+      .log-line.ok   { color: #00e5c0; }
+      .log-line.err  { color: #ff5c5c; }
+      .log-line.warn { color: #e5c100; }
+
+      .result-box {
+        background: #141a24;
+        border: 2px solid #00e5c0;
+        padding: 1rem 1.25rem;
+        margin-bottom: 1.5rem;
+        font-size: 1.4rem;
+        font-family: 'Orbitron', sans-serif;
+        color: #00e5c0;
+        text-align: center;
+        display: none;
+      }
+
+      a.back {
+        display: inline-block;
+        color: #5a6a7a;
+        text-decoration: none;
+        font-size: 0.75rem;
+        margin-bottom: 1rem;
+      }
+      a.back:hover { color: #00e5c0; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <a class="back" href="/">&larr; Back to Scanner</a>
+      <header>
+        <p class="kicker">FHE Subsystem Validation</p>
+        <h1>Toy 1 + 2 = 3 Test</h1>
+      </header>
+
+      <div class="btn-row">
+        <button id="btnLoad" onclick="loadWasm()">1. Load WASM</button>
+        <button id="btnKeys" onclick="generateKeys()" disabled>2. Generate Keys</button>
+        <button id="btnUpload" onclick="uploadKeys()" disabled>3. Upload Keys</button>
+        <button id="btnTest" onclick="runTest()" disabled>4. Run 1+2=3 Test</button>
+      </div>
+
+      <div class="result-box" id="resultBox"></div>
+
+      <div class="log-container" id="logBox"></div>
+    </div>
+
+    <script type="module">
+      /* ── helpers ── */
+      const logBox = document.getElementById('logBox');
+      function log(msg, cls = 'info') {
+        const ts = new Date().toLocaleTimeString();
+        const el = document.createElement('div');
+        el.className = 'log-line ' + cls;
+        el.textContent = `[${ts}] ${msg}`;
+        logBox.appendChild(el);
+        logBox.scrollTop = logBox.scrollHeight;
+      }
+
+      function uint8ToBase64(uint8arr) {
+        let binary = '';
+        for (let i = 0; i < uint8arr.length; i++) {
+          binary += String.fromCharCode(uint8arr[i]);
+        }
+        return btoa(binary);
+      }
+
+      function base64ToUint8Array(b64) {
+        const binary = atob(b64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes;
+      }
+
+      /* ── state ── */
+      let openfhe = null;
+      let cc = null;
+      let keys = null;
+
+      /* ── step 1: load WASM ── */
+      async function loadWasm() {
+        const btn = document.getElementById('btnLoad');
+        btn.disabled = true;
+        log('Loading openfhe-wasm (~3 MB download)...');
+        try {
+          const mod = await import('/static/wasm/openfhe_pke_es6.js');
+          const createModule = mod.default;
+          openfhe = await createModule();
+          log('openfhe-wasm loaded successfully', 'ok');
+          document.getElementById('btnKeys').disabled = false;
+        } catch (e) {
+          log('Failed to load WASM: ' + e.message, 'err');
+          btn.disabled = false;
+        }
+      }
+      window.loadWasm = loadWasm;
+
+      /* ── step 2: generate keys ── */
+      async function generateKeys() {
+        const btn = document.getElementById('btnKeys');
+        btn.disabled = true;
+        log('Creating CKKS crypto context...');
+        try {
+          const params = new openfhe.CCParamsCryptoContextCKKSRNS();
+          params.SetMultiplicativeDepth(1);
+          params.SetScalingModSize(50);
+          params.SetRingDim(8192);
+          params.SetBatchSize(4096);
+          params.SetSecurityLevel(openfhe.HEStd_128_classic);
+          params.SetScalingTechnique(openfhe.FLEXIBLEAUTO);
+          log('Params set. Generating context...');
+
+          cc = openfhe.GenCryptoContextCKKS(params);
+          cc.Enable(openfhe.PKE);
+          cc.Enable(openfhe.KEYSWITCH);
+          cc.Enable(openfhe.LEVELEDSHE);
+          log('Context created and features enabled', 'ok');
+
+          log('Generating keypair (this may take a moment)...');
+          keys = cc.KeyGen();
+          log('Keypair generated', 'ok');
+
+          document.getElementById('btnUpload').disabled = false;
+          document.getElementById('btnTest').disabled = false;
+        } catch (e) {
+          log('Key generation failed: ' + e.message, 'err');
+          btn.disabled = false;
+        }
+      }
+      window.generateKeys = generateKeys;
+
+      /* ── step 3: upload keys ── */
+      async function uploadKeys() {
+        const btn = document.getElementById('btnUpload');
+        btn.disabled = true;
+        log('Serializing crypto context...');
+        try {
+          const ccBuf = openfhe.SerializeCryptoContextToBuffer(cc, openfhe.SerType.BINARY);
+          log(`Context serialized: ${ccBuf.length} bytes`);
+
+          const pkBuf = openfhe.SerializePublicKeyToBuffer(keys.publicKey, openfhe.SerType.BINARY);
+          log(`Public key serialized: ${pkBuf.length} bytes`);
+
+          const ccB64 = uint8ToBase64(ccBuf);
+          const pkB64 = uint8ToBase64(pkBuf);
+          log(`Base64 sizes — context: ${ccB64.length}, pubkey: ${pkB64.length}`);
+
+          log('POSTing to /fhe/keys ...');
+          const resp = await fetch('/fhe/keys', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              crypto_context: ccB64,
+              public_key: pkB64,
+              eval_keys: null,
+            }),
+          });
+
+          if (!resp.ok) {
+            const text = await resp.text();
+            throw new Error(`Server returned ${resp.status}: ${text}`);
+          }
+
+          const data = await resp.json();
+          log('Keys uploaded: ' + JSON.stringify(data), 'ok');
+        } catch (e) {
+          log('Key upload failed: ' + e.message, 'err');
+        } finally {
+          btn.disabled = false;
+        }
+      }
+      window.uploadKeys = uploadKeys;
+
+      /* ── step 4: run 1+2=3 test ── */
+      async function runTest() {
+        const btn = document.getElementById('btnTest');
+        btn.disabled = true;
+        const resultBox = document.getElementById('resultBox');
+        resultBox.style.display = 'none';
+
+        try {
+          /* encrypt 1.0 */
+          log('Encrypting value 1.0 ...');
+          const v1 = new openfhe.VectorDouble();
+          v1.push_back(1.0);
+          const pt1 = cc.MakeCKKSPackedPlaintext(v1);
+          const ct1 = cc.Encrypt(keys.publicKey, pt1);
+          log('Ciphertext A created', 'ok');
+
+          /* encrypt 2.0 */
+          log('Encrypting value 2.0 ...');
+          const v2 = new openfhe.VectorDouble();
+          v2.push_back(2.0);
+          const pt2 = cc.MakeCKKSPackedPlaintext(v2);
+          const ct2 = cc.Encrypt(keys.publicKey, pt2);
+          log('Ciphertext B created', 'ok');
+
+          /* serialize ciphertexts */
+          log('Serializing ciphertexts...');
+          const ct1Buf = openfhe.SerializeCiphertextToBuffer(ct1, openfhe.SerType.BINARY);
+          const ct2Buf = openfhe.SerializeCiphertextToBuffer(ct2, openfhe.SerType.BINARY);
+          log(`Ciphertext sizes — A: ${ct1Buf.length}, B: ${ct2Buf.length}`);
+
+          const ct1B64 = uint8ToBase64(ct1Buf);
+          const ct2B64 = uint8ToBase64(ct2Buf);
+
+          /* send to server */
+          log('POSTing to /fhe/toy-add ...');
+          const resp = await fetch('/fhe/toy-add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ct_a: ct1B64, ct_b: ct2B64 }),
+          });
+
+          if (!resp.ok) {
+            const text = await resp.text();
+            throw new Error(`Server returned ${resp.status}: ${text}`);
+          }
+
+          const data = await resp.json();
+          log('Server returned result ciphertext (' + data.result.length + ' chars base64)', 'ok');
+
+          /* deserialize result */
+          log('Deserializing result ciphertext...');
+          const resBuf = base64ToUint8Array(data.result);
+          const ctResult = openfhe.DeserializeCiphertextFromBuffer(resBuf, openfhe.SerType.BINARY);
+          log('Result ciphertext deserialized', 'ok');
+
+          /* decrypt */
+          log('Decrypting result...');
+          const ptResult = cc.Decrypt(keys.secretKey, ctResult);
+          ptResult.SetLength(1);
+          const val = ptResult.GetRealPackedValue()[0];
+          const rounded = Math.round(val * 1000) / 1000;
+          log(`Decrypted value: ${val}`, 'ok');
+          log(`Rounded: ${rounded}`, 'ok');
+
+          /* display */
+          const pass = Math.abs(rounded - 3.0) < 0.01;
+          if (pass) {
+            log('TEST PASSED: 1 + 2 = ' + rounded, 'ok');
+            resultBox.textContent = '1 + 2 = ' + rounded + '  ✓ PASS';
+            resultBox.style.borderColor = '#00e5c0';
+            resultBox.style.color = '#00e5c0';
+          } else {
+            log('TEST FAILED: expected ~3.0, got ' + rounded, 'err');
+            resultBox.textContent = '1 + 2 = ' + rounded + '  ✗ FAIL';
+            resultBox.style.borderColor = '#ff5c5c';
+            resultBox.style.color = '#ff5c5c';
+          }
+          resultBox.style.display = 'block';
+        } catch (e) {
+          log('Test failed: ' + e.message, 'err');
+        } finally {
+          btn.disabled = false;
+        }
+      }
+      window.runTest = runTest;
+
+      /* auto-log on load */
+      log('FHE Toy Test page loaded. Click "1. Load WASM" to begin.');
+    </script>
+  </body>
+</html>

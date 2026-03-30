@@ -289,4 +289,9 @@ def serve_index() -> FileResponse:
     return FileResponse(CLIENT_DIR / "index.html")
 
 
+@app.get("/fhe-toy")
+def serve_fhe_toy() -> FileResponse:
+    return FileResponse(CLIENT_DIR / "fhe-toy.html")
+
+
 app.mount("/static", StaticFiles(directory=CLIENT_DIR), name="static")
