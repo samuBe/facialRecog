@@ -93,6 +93,39 @@ Standalone page that loads openfhe-wasm and provides:
 - Client-generated keys work with server-side homomorphic evaluation
 - End-to-end round-trip: client encrypt → server compute → client decrypt
 
+## Implementation Findings (Phase A Results)
+
+### Verified
+- **Cross-platform serialization works** — OpenFHE v1.5.0.3 binary format is compatible between openfhe-python and openfhe-wasm
+- **WASM bundle is 2.9MB** (much smaller than estimated 5-20MB)
+- **Round-trip accuracy**: `1 + 2 = 3.000000000026` (error ~2.6e-11)
+
+### API Details Discovered
+
+| Detail | Python (openfhe-python) | WASM (openfhe-wasm) |
+|--------|------------------------|---------------------|
+| Serialize | `openfhe.Serialize(obj, openfhe.BINARY)` → bytes | `openfhe.SerializeCiphertextToBuffer(ct, openfhe.SerType.BINARY)` → Uint8Array |
+| Deserialize CT | `openfhe.DeserializeCiphertextString(data, openfhe.BINARY)` | `openfhe.DeserializeCiphertextFromBuffer(buf, openfhe.SerType.BINARY)` |
+| EvalAdd | `cc.EvalAdd(ct1, ct2)` | `cc.EvalAddCipherCipher(ct1, ct2)` |
+| Security level | `openfhe.SecurityLevel.HEStd_128_classic` | `openfhe.HEStd_128_classic` |
+| Scaling technique | `openfhe.ScalingTechnique.FLEXIBLEAUTO` | `openfhe.FLEXIBLEAUTO` |
+| Enable features | `cc.Enable(openfhe.PKESchemeFeature.PKE)` | `cc.Enable(openfhe.PKE)` |
+| SetFirstModSize | Supported | **Not available** in WASM bindings |
+| batch_size | Must be ≤ ring_dim / 2 | Same constraint |
+
+### CKKS Parameters (hardcoded, both sides)
+- `MultiplicativeDepth`: 1
+- `ScalingModSize`: 50
+- `RingDim`: 8192
+- `BatchSize`: 4096
+- `SecurityLevel`: HEStd_128_classic
+- `ScalingTechnique`: FLEXIBLEAUTO
+
+### Risk Assessment Update
+1. **heir_py key injection** — CONFIRMED: heir_py does not support external keys. Toy uses openfhe-python directly. Phase B must implement dot product in raw OpenFHE or find a way to bridge.
+2. **openfhe-wasm serialization** — RESOLVED: Full buffer-based serialization API available.
+3. **Version mismatch** — RESOLVED: Both sides built from v1.5.0.3. Note: installing openfhe-python causes segfaults in heir_py tests (library conflict). These are independent paths.
+
 ## Out of Scope (Phase B)
 
 - Integration with the facial recognition UI
