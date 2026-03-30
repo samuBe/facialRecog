@@ -173,6 +173,13 @@ try:
 except ImportError:
     fhe_logger.warning("heir_py not installed — FHE endpoints disabled")
 
+try:
+    from fhe_toy_routes import router as fhe_toy_router
+    app.include_router(fhe_toy_router)
+    fhe_logger.info("FHE toy endpoints enabled")
+except ImportError as exc:
+    fhe_logger.warning("FHE toy endpoints disabled: %s", exc)
+
 
 @app.on_event("startup")
 def startup() -> None:
