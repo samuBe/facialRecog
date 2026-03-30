@@ -3,49 +3,299 @@ const MODEL_URLS = [
   "https://justadudewhohacks.github.io/face-api.js/models/",
 ];
 const API_URL = "http://localhost:8000";
+const OPENFHE_CONFIG = {
+  multiplicativeDepth: 2,
+  scalingModSize: 50,
+  ringDim: 16384,
+  batchSize: 128,
+  rotationSteps: [1, 2, 4, 8, 16, 32, 64],
+};
+const OPENFHE_LOOKUP_CONFIG = {
+  topK: 5,
+  threshold: 0.35,
+};
 
-const fheToggleBtn = document.getElementById("fheToggleBtn");
+const modePicker = document.getElementById("modePicker");
+const modeTriggerBtn = document.getElementById("modeTriggerBtn");
+const modeMenu = document.getElementById("modeMenu");
+const modeOptions = [...document.querySelectorAll(".mode-option")];
 const fheDot = document.getElementById("fheDot");
 const fheLabel = document.getElementById("fheLabel");
-let fheMode = false;
+let computeMode = "plaintext";
 
-function setFheStatus(on) {
-  fheMode = on;
-  fheDot.classList.toggle("active", on);
-  fheToggleBtn.classList.toggle("active", on);
-  fheLabel.textContent = on ? "FHE ON" : "FHE Mode";
+if (!modePicker || !modeTriggerBtn || !modeMenu || !fheDot || !fheLabel) {
+  throw new Error("Compute mode UI failed to initialize. Reload the page to fetch the latest client bundle.");
 }
 
-async function toggleFhe() {
-  if (!fheMode) {
-    fheLabel.textContent = "Checking...";
-    try {
-      const r = await fetch(`${API_URL}/health`);
-      const data = await r.json();
-      if (data.fhe !== "ok") {
-        setFheStatus(false);
-        const reason = data.fhe_reason ? ` (${data.fhe_reason})` : "";
-        log("FHE backend not available — server reports fhe: " + data.fhe + reason);
-        return;
-      }
-    } catch (err) {
-      setFheStatus(false);
-      log("Cannot reach server — FHE unavailable: " + err.message);
+const MODE_CONFIG = {
+  plaintext: {
+    label: "Plaintext",
+    logLabel: "plaintext",
+    dotActive: false,
+  },
+  heir: {
+    label: "HEIR FHE",
+    logLabel: "HEIR encrypted",
+    dotActive: true,
+  },
+  openfhe: {
+    label: "OpenFHE Experiment",
+    logLabel: "OpenFHE experimental",
+    dotActive: true,
+  },
+};
+
+const openFheState = {
+  module: null,
+  cc: null,
+  keys: null,
+  sessionId: null,
+  initPromise: null,
+};
+
+function uint8ToBase64(uint8arr) {
+  let binary = "";
+  for (let i = 0; i < uint8arr.length; i++) {
+    binary += String.fromCharCode(uint8arr[i]);
+  }
+  return btoa(binary);
+}
+
+function base64ToUint8Array(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function copyVecToJs(vec) {
+  return new Array(vec.size()).fill(0).map((_, idx) => vec.get(idx));
+}
+
+function normalizeEmbedding(values) {
+  const norm = Math.hypot(...values);
+  if (!norm) {
+    throw new Error("Embedding norm cannot be zero.");
+  }
+  return values.map((value) => value / norm);
+}
+
+function resetOpenFheState() {
+  openFheState.cc = null;
+  openFheState.keys = null;
+  openFheState.sessionId = null;
+  openFheState.initPromise = null;
+}
+
+function requireOpenFheEnum(group, key) {
+  const value = openFheState.module?.[group]?.[key];
+  if (value === undefined) {
+    throw new Error(`openfhe.${group}.${key} is not available in this WASM build`);
+  }
+  return value;
+}
+
+function openFheVector(values) {
+  const vec = new openFheState.module.VectorDouble();
+  values.forEach((value) => vec.push_back(value));
+  return vec;
+}
+
+async function ensureOpenFheClientSession() {
+  if (openFheState.module && openFheState.cc && openFheState.keys && openFheState.sessionId) {
+    return openFheState;
+  }
+
+  if (openFheState.initPromise) {
+    return openFheState.initPromise;
+  }
+
+  openFheState.initPromise = (async () => {
+    if (!openFheState.module) {
+      log("Loading openfhe-wasm for OpenFHE mode...");
+      const mod = await import("/static/wasm/openfhe_pke_es6.js");
+      openFheState.module = await mod.default();
+      log("OpenFHE WASM loaded.", "ok");
+    }
+
+    showProgress("Generating OpenFHE client keys...", 20);
+    const params = new openFheState.module.CCParamsCryptoContextCKKSRNS();
+    params.SetMultiplicativeDepth(OPENFHE_CONFIG.multiplicativeDepth);
+    params.SetScalingModSize(OPENFHE_CONFIG.scalingModSize);
+    params.SetRingDim(OPENFHE_CONFIG.ringDim);
+    params.SetBatchSize(OPENFHE_CONFIG.batchSize);
+    params.SetSecurityLevel(requireOpenFheEnum("SecurityLevel", "HEStd_128_classic"));
+    params.SetScalingTechnique(requireOpenFheEnum("ScalingTechnique", "FLEXIBLEAUTO"));
+
+    openFheState.cc = openFheState.module.GenCryptoContextCKKS(params);
+    openFheState.cc.Enable(requireOpenFheEnum("PKESchemeFeature", "PKE"));
+    openFheState.cc.Enable(requireOpenFheEnum("PKESchemeFeature", "KEYSWITCH"));
+    openFheState.cc.Enable(requireOpenFheEnum("PKESchemeFeature", "LEVELEDSHE"));
+
+    openFheState.keys = openFheState.cc.KeyGen();
+    openFheState.cc.EvalAtIndexKeyGen(openFheState.keys.secretKey, OPENFHE_CONFIG.rotationSteps);
+
+    showProgress("Creating OpenFHE server session...", 40);
+    const sessionResp = await fetch(`${API_URL}/fhe-openfhe/session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!sessionResp.ok) {
+      throw new Error(`OpenFHE session bootstrap failed: ${sessionResp.status}`);
+    }
+    const sessionData = await sessionResp.json();
+    openFheState.sessionId = sessionData.session_id;
+
+    showProgress("Uploading OpenFHE public and eval keys...", 55);
+    const ccBuf = openFheState.module.SerializeCryptoContextToBuffer(
+      openFheState.cc,
+      openFheState.module.SerType.BINARY
+    );
+    const pkBuf = openFheState.module.SerializePublicKeyToBuffer(
+      openFheState.keys.publicKey,
+      openFheState.module.SerType.BINARY
+    );
+    const autoBuf = openFheState.cc.SerializeEvalAutomorphismKeyToBuffer(
+      openFheState.module.SerType.BINARY
+    );
+
+    const keyResp = await fetch(`${API_URL}/fhe-openfhe/session/${openFheState.sessionId}/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        crypto_context: uint8ToBase64(ccBuf),
+        public_key: uint8ToBase64(pkBuf),
+        eval_automorphism_key: uint8ToBase64(autoBuf),
+      }),
+    });
+    if (!keyResp.ok) {
+      const errorBody = await keyResp.json().catch(() => ({}));
+      throw new Error(errorBody.detail || `OpenFHE key upload failed: ${keyResp.status}`);
+    }
+
+    log("OpenFHE client session ready.", "ok");
+    return openFheState;
+  })().catch((error) => {
+    resetOpenFheState();
+    throw error;
+  }).finally(() => {
+    openFheState.initPromise = null;
+  });
+
+  return openFheState.initPromise;
+}
+
+function encryptOpenFheEmbedding(embedding) {
+  const normalized = normalizeEmbedding(embedding);
+  const plaintext = openFheState.cc.MakeCKKSPackedPlaintext(openFheVector(normalized));
+  const ciphertext = openFheState.cc.Encrypt(openFheState.keys.publicKey, plaintext);
+  const buf = openFheState.module.SerializeCiphertextToBuffer(ciphertext, openFheState.module.SerType.BINARY);
+  return uint8ToBase64(buf);
+}
+
+function decryptOpenFheScore(ciphertextB64) {
+  const buf = base64ToUint8Array(ciphertextB64);
+  const ciphertext = openFheState.module.DeserializeCiphertextFromBuffer(
+    buf,
+    openFheState.module.SerType.BINARY
+  );
+  const plaintext = openFheState.cc.Decrypt(openFheState.keys.secretKey, ciphertext);
+  plaintext.SetLength(1);
+  const values = copyVecToJs(plaintext.GetRealPackedValue());
+  return values[0];
+}
+
+function setComputeMode(mode) {
+  computeMode = mode;
+  const config = MODE_CONFIG[mode];
+  fheDot.classList.toggle("active", config.dotActive);
+  modeTriggerBtn.classList.toggle("active", config.dotActive);
+  modeTriggerBtn.dataset.mode = mode;
+  fheLabel.textContent = config.label;
+
+  modeOptions.forEach((option) => {
+    option.classList.toggle("active", option.dataset.mode === mode);
+  });
+}
+
+function setModeMenuOpen(open) {
+  modeTriggerBtn.setAttribute("aria-expanded", String(open));
+  modeMenu.hidden = !open;
+  modePicker.classList.toggle("open", open);
+}
+
+async function fetchHealth() {
+  const r = await fetch(`${API_URL}/health`);
+  if (!r.ok) {
+    throw new Error(`Health check failed: ${r.status}`);
+  }
+  return r.json();
+}
+
+async function canUseMode(mode) {
+  if (mode === "plaintext") {
+    return { ok: true };
+  }
+
+  const health = await fetchHealth();
+
+  if (mode === "heir") {
+    if (health.fhe === "ok") {
+      return { ok: true };
+    }
+    return { ok: false, reason: health.fhe_reason || "HEIR FHE unavailable" };
+  }
+
+  if (mode === "openfhe") {
+    if (health.openfhe_experiment === "ok") {
+      return { ok: true };
+    }
+    return { ok: false, reason: health.openfhe_reason || "OpenFHE experiment unavailable" };
+  }
+
+  return { ok: false, reason: "Unknown mode" };
+}
+
+async function selectComputeMode(mode) {
+  if (mode === computeMode) {
+    setModeMenuOpen(false);
+    return;
+  }
+
+  const nextLabel = MODE_CONFIG[mode]?.label || mode;
+  fheLabel.textContent = `Checking ${nextLabel}...`;
+
+  try {
+    const result = await canUseMode(mode);
+    if (!result.ok) {
+      setComputeMode(computeMode);
+      log(`${nextLabel} not available${result.reason ? `: ${result.reason}` : "."}`);
       return;
     }
-    setFheStatus(true);
-    log("FHE mode ON — using encrypted backend");
-  } else {
-    setFheStatus(false);
-    log("FHE mode OFF — using plaintext backend");
+
+    setComputeMode(mode);
+    if (mode === "plaintext") {
+      log("Compute mode set to plaintext.");
+    } else if (mode === "heir") {
+      log("Compute mode set to HEIR FHE.");
+    } else if (mode === "openfhe") {
+      log("Compute mode set to OpenFHE experiment. Enrollment stays on the standard store.");
+    }
+  } catch (err) {
+    setComputeMode(computeMode);
+    log(`Cannot switch compute mode: ${err.message}`);
+  } finally {
+    setModeMenuOpen(false);
   }
 }
 
-window.__toggleFhe = toggleFhe;
-fheToggleBtn.addEventListener("click", toggleFhe);
-
 function apiPath(path) {
-  return fheMode ? `${API_URL}/fhe${path}` : `${API_URL}${path}`;
+  if (computeMode === "heir") {
+    return `${API_URL}/fhe${path}`;
+  }
+  return `${API_URL}${path}`;
 }
 
 const uploadInput = document.getElementById("uploadInput");
@@ -297,8 +547,12 @@ async function lookupFace() {
     return;
   }
 
-  if (fheMode) {
+  if (computeMode === "heir") {
     return lookupFaceFHE(embedding);
+  }
+
+  if (computeMode === "openfhe") {
+    return lookupFaceOpenFHE(embedding);
   }
 
   try {
@@ -372,6 +626,60 @@ async function lookupFaceFHE(embedding) {
     hideProgress();
     log("FHE search error: " + error.message);
   }
+}
+
+async function lookupFaceOpenFHE(embedding) {
+  showProgress("Preparing OpenFHE client encryption...", 10);
+  resultsNode.innerHTML = "";
+  log("OpenFHE client-encrypted search starting...");
+
+  try {
+    await ensureOpenFheClientSession();
+    showProgress("Encrypting query in browser...", 65);
+    const encryptedQuery = encryptOpenFheEmbedding(embedding);
+
+    const response = await fetch(`${API_URL}/fhe-openfhe/search`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: openFheState.sessionId,
+        encrypted_query: encryptedQuery,
+        top_k: OPENFHE_LOOKUP_CONFIG.topK,
+        threshold: OPENFHE_LOOKUP_CONFIG.threshold,
+      }),
+    });
+
+    if (response.status === 404) {
+      resetOpenFheState();
+      throw new Error("OpenFHE session expired on the server. Try the lookup again.");
+    }
+
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => ({}));
+      throw new Error(errorBody.detail || `OpenFHE lookup failed: ${response.status}`);
+    }
+
+    showProgress("Decrypting OpenFHE scores in browser...", 85);
+    const data = await response.json();
+    const ranked = (data.candidates || []).map((candidate) => ({
+      label: candidate.label,
+      similarity: roundSimilarity(decryptOpenFheScore(candidate.encrypted_score)),
+      metadata: candidate.metadata,
+    })).filter((candidate) => candidate.similarity >= OPENFHE_LOOKUP_CONFIG.threshold);
+
+    ranked.sort((a, b) => b.similarity - a.similarity);
+    const top = ranked.slice(0, OPENFHE_LOOKUP_CONFIG.topK);
+    hideProgress();
+    renderMatches(top);
+    log(`OpenFHE client-encrypted search complete in ${data.elapsed_ms}ms. ${top.length} candidate(s) above threshold.`);
+  } catch (error) {
+    hideProgress();
+    log("OpenFHE search error: " + error.message);
+  }
+}
+
+function roundSimilarity(value) {
+  return Math.round(value * 10000) / 10000;
 }
 
 function renderMatches(matches) {
@@ -703,5 +1011,28 @@ bulkCancelBtn.addEventListener("click", () => {
   bulkResults = [];
 });
 
+modeTriggerBtn.addEventListener("click", () => {
+  setModeMenuOpen(modeMenu.hidden);
+});
+
+modeOptions.forEach((option) => {
+  option.addEventListener("click", () => {
+    selectComputeMode(option.dataset.mode);
+  });
+});
+
+document.addEventListener("click", (event) => {
+  if (!modePicker.contains(event.target)) {
+    setModeMenuOpen(false);
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    setModeMenuOpen(false);
+  }
+});
+
 window.addEventListener("beforeunload", stopCamera);
+setComputeMode("plaintext");
 loadModels();

@@ -192,6 +192,26 @@ try:
 except ImportError as exc:
     fhe_logger.warning("FHE toy endpoints disabled: %s", exc)
 
+_openfhe_available = False
+_openfhe_unavailable_reason: str | None = None
+try:
+    from fhe.openfhe_backend import openfhe_available_reason
+    from fhe_openfhe_routes import router as fhe_openfhe_router
+
+    app.include_router(fhe_openfhe_router)
+    _openfhe_unavailable_reason = openfhe_available_reason()
+    _openfhe_available = _openfhe_unavailable_reason is None
+    if _openfhe_available:
+        fhe_logger.info("Experimental OpenFHE routes enabled")
+    else:
+        fhe_logger.warning(
+            "Experimental OpenFHE routes available but backend disabled: %s",
+            _openfhe_unavailable_reason,
+        )
+except ImportError as exc:
+    _openfhe_unavailable_reason = str(exc)
+    fhe_logger.warning("Experimental OpenFHE routes disabled: %s", exc)
+
 
 @app.on_event("startup")
 def startup() -> None:
@@ -236,6 +256,8 @@ def health() -> dict[str, str | None]:
         "status": "ok",
         "fhe": "ok" if _fhe_available and fhe_reason is None else "disabled",
         "fhe_reason": fhe_reason if _fhe_available else _fhe_unavailable_reason,
+        "openfhe_experiment": "ok" if _openfhe_available else "disabled",
+        "openfhe_reason": _openfhe_unavailable_reason,
     }
 
 

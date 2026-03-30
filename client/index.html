@@ -10,9 +10,9 @@
       href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Share+Tech+Mono&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=3" />
     <script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.13/dist/face-api.min.js"></script>
-    <script defer src="/static/app.js?v=3"></script>
+    <script defer src="/static/app.js?v=5"></script>
   </head>
   <body>
     <div class="hud-grid"></div>
@@ -25,10 +25,30 @@
         <div class="status">
           <span class="dot" id="modelDot"></span>
           <span id="modelStatus">Loading models...</span>
-          <button type="button" class="fhe-toggle" id="fheToggleBtn">
-            <span class="fhe-dot" id="fheDot"></span>
-            <span id="fheLabel">FHE Mode</span>
-          </button>
+          <div class="mode-picker" id="modePicker">
+            <button type="button" class="mode-trigger" id="modeTriggerBtn" aria-haspopup="true" aria-expanded="false">
+              <span class="fhe-dot" id="fheDot"></span>
+              <span class="mode-copy">
+                <span class="mode-eyebrow">Compute Mode</span>
+                <span id="fheLabel">Plaintext</span>
+              </span>
+              <span class="mode-chevron" aria-hidden="true"></span>
+            </button>
+            <div class="mode-menu" id="modeMenu" hidden>
+              <button type="button" class="mode-option active" data-mode="plaintext">
+                <span class="mode-option-title">Plaintext</span>
+                <span class="mode-option-detail">Fast local lookup with standard dot product</span>
+              </button>
+              <button type="button" class="mode-option" data-mode="heir">
+                <span class="mode-option-title">HEIR FHE</span>
+                <span class="mode-option-detail">Current encrypted pipeline on `/fhe/*`</span>
+              </button>
+              <button type="button" class="mode-option" data-mode="openfhe">
+                <span class="mode-option-title">OpenFHE Experiment</span>
+                <span class="mode-option-detail">Sidecar encrypted lookup on `/fhe-openfhe/*`</span>
+              </button>
+            </div>
+          </div>
         </div>
       </header>
 

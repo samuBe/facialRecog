@@ -221,6 +221,143 @@ video,
   padding: 6px 10px;
 }
 
+.mode-picker {
+  position: relative;
+  width: clamp(260px, 32vw, 520px);
+}
+
+.mode-trigger {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid rgba(52, 245, 255, 0.28);
+  background:
+    linear-gradient(180deg, rgba(10, 29, 40, 0.95), rgba(4, 16, 24, 0.98)),
+    radial-gradient(circle at top left, rgba(52, 245, 255, 0.1), transparent 55%);
+  color: var(--text);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02), 0 10px 30px rgba(0, 0, 0, 0.25);
+  transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.mode-trigger:hover,
+.mode-picker.open .mode-trigger {
+  border-color: rgba(52, 245, 255, 0.65);
+  transform: translateY(-1px);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04), 0 12px 30px rgba(0, 210, 255, 0.12);
+}
+
+.mode-trigger.active {
+  border-color: rgba(100, 255, 218, 0.72);
+  background:
+    linear-gradient(180deg, rgba(8, 36, 45, 0.98), rgba(3, 18, 24, 0.98)),
+    radial-gradient(circle at top left, rgba(100, 255, 218, 0.12), transparent 55%);
+}
+
+.mode-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mode-eyebrow {
+  color: var(--text-dim);
+  font-size: 0.62rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.mode-copy #fheLabel {
+  font-family: "Orbitron", sans-serif;
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.mode-chevron {
+  width: 10px;
+  height: 10px;
+  border-right: 2px solid var(--text-dim);
+  border-bottom: 2px solid var(--text-dim);
+  transform: rotate(45deg);
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.mode-picker.open .mode-chevron {
+  transform: rotate(-135deg) translateY(-1px);
+  border-color: var(--text);
+}
+
+.mode-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  width: 100%;
+  min-width: 0;
+  max-width: 520px;
+  z-index: 20;
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid rgba(52, 245, 255, 0.24);
+  background:
+    linear-gradient(180deg, rgba(3, 13, 19, 0.98), rgba(1, 8, 14, 0.98)),
+    radial-gradient(circle at top, rgba(52, 245, 255, 0.08), transparent 60%);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(10px);
+}
+
+.mode-menu[hidden] {
+  display: none;
+}
+
+.mode-option {
+  width: 100%;
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid rgba(52, 245, 255, 0.14);
+  background: rgba(6, 22, 31, 0.84);
+  color: var(--text);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+}
+
+.mode-option:hover {
+  border-color: rgba(52, 245, 255, 0.45);
+  background: rgba(9, 31, 42, 0.92);
+  transform: translateX(2px);
+}
+
+.mode-option.active {
+  border-color: rgba(100, 255, 218, 0.72);
+  background: linear-gradient(90deg, rgba(14, 46, 52, 0.96), rgba(7, 25, 30, 0.96));
+  box-shadow: inset 3px 0 0 rgba(100, 255, 218, 0.9);
+}
+
+.mode-option-title {
+  font-family: "Orbitron", sans-serif;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mode-option-detail {
+  color: var(--text-dim);
+  font-size: 0.68rem;
+  line-height: 1.35;
+  max-width: 32ch;
+}
+
 .dot {
   width: 10px;
   height: 10px;
@@ -449,32 +586,29 @@ video,
   .stage {
     min-height: auto;
   }
-}
 
-.fhe-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  cursor: pointer;
-  font-family: "Share Tech Mono", monospace;
-  font-size: 0.8rem;
-  color: var(--text-muted, #8892b0);
-  padding: 0.3rem 0.6rem;
-  border: 1px solid var(--line, #1a3a4a);
-  border-radius: 4px;
-  background: transparent;
-  transition: all 0.2s;
-}
+  .shell-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
 
-.fhe-toggle:hover {
-  border-color: #64ffda;
-}
+  .status {
+    width: 100%;
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
 
-.fhe-toggle.active {
-  border-color: #64ffda;
-  background: rgba(100, 255, 218, 0.08);
-  color: #64ffda;
-  font-weight: 700;
+  .mode-trigger {
+    width: 100%;
+  }
+
+  .mode-menu {
+    left: 0;
+    right: auto;
+    width: 100%;
+    max-width: min(100vw - 64px, 360px);
+  }
 }
 
 .fhe-dot {
